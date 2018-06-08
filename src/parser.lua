@@ -82,7 +82,7 @@ local token_mt = {
 
 Token = setmetatable(Token, token_mt)
 -------------------------------------------------------------------------------
--- Tokens type constants 
+-- Token type constants 
 -------------------------------------------------------------------------------
 local char      = "char"
 local char_star = "char_star"
@@ -94,17 +94,19 @@ local set_comp  = "set_comp"
 local group     = "group"
 local grp_star  = "group_star"
 local grp_plus  = "group_plus"
-
+-------------------------------------------------------------------------------
 -- token operation constants
+-------------------------------------------------------------------------------
 local op_concat = "op_concat"
 local op_union  = "op_union"
 local op_star   = "op_star"
 local op_plus   = "op_plus"
 local op_comp   = "op_comp"
-
+-------------------------------------------------------------------------------
 -- token forbidden types
-local forb_set = Table(char_star, char_plus)
- 
+-------------------------------------------------------------------------------
+local forb_set = Table(char_star, char_plus, group, grp_star, grp_plus)
+ -------------------------------------------------------------------------------
 function Token:isSimple()
    return self.type == char      or 
           self.type == char_star or 
@@ -237,10 +239,10 @@ local function tk_char_plus(input)
 end
 
 local function tk_set(input)
-   local len = input:len()
-   local i   = 0
+   local n = input:len()
+   local i = 0
 
-   for k = 1, len do
+   for k = 1, n do
       local c = input:sub(k, k)
 
       if c == '[' and i == 0 then
@@ -274,7 +276,7 @@ local function tk_set_star(input)
       return nil
    end
 
-   if input:sub(j + 1, j + 1)  == '*' then
+   if input:sub(j + 1, j + 1) == '*' then
       local token = Token(i, j + 1, set_star, input:sub(i, j), op_star)
       token.forbidden = forb_set
 
@@ -303,7 +305,7 @@ local function tk_set_plus(input)
       return nil
    end
 
-   if input:sub(j + 1, j + 1)  == '+' then
+   if input:sub(j + 1, j + 1) == '+' then
       local token = Token(i, j + 1, set_plus, input:sub(i, j), op_plus)
       token.forbidden = forb_set
 
@@ -332,7 +334,7 @@ local function tk_set_comp(input)
       return nil
    end
 
-   if input:sub(i + 1, i + 1)  == '^' then
+   if input:sub(i + 1, i + 1) == '^' then
       local value = input:sub(i, i) .. input:sub(i + 2, j)
       local token = Token(i, j + 1, set_comp, value, op_comp)
       token.forbidden = forb_set
@@ -354,19 +356,107 @@ local function tk_group(input)
 
       if c == ')' then
          j = k
-         return Token(i, k, group, input:sub(i, k))
       end
    end
 
-   -- if i == 0 or j == 0 or i >= j then
-   --    return nil
-   -- end
+   if i == 0 or j == 0 or i >= j then
+      return nil
+   end
 
-   -- return Token(i, j, group, input:sub(i, j))
+   return Token(i, j, group, input:sub(i + 1, j - 1), op_concat)
+end
+
+local function tk_group_star(input)
+   local len  = input:len()
+   local i, j = 0, 0
+
+   for k = 1, len do
+      local c = input:sub(k, k)
+
+      if c == '(' and i == 0 then
+         i = k
+      end
+
+      if c == ')' then
+         j = k
+      end
+   end
+
+   if i == 0 or j == 0 or i >= j then
+      return nil
+   end
+
+   if input:sub(j + 1, j + 1) == '*' then
+      return Token(i, j + 1, grp_star, input:sub(i, j), op_star)
+   end
+end
+
+local function tk_group_plus(input)
+   local len  = input:len()
+   local i, j = 0, 0
+
+   for k = 1, len do
+      local c = input:sub(k, k)
+
+      if c == '(' and i == 0 then
+         i = k
+      end
+
+      if c == ')' then
+         j = k
+      end
+   end
+
+   if i == 0 or j == 0 or i >= j then
+      return nil
+   end
+
+   if input:sub(j + 1, j + 1) == '+' then
+      return Token(i, j + 1, grp_plus, input:sub(i, j), op_plus)
+   end
+end
+
+local function tk_fix_group_in_set(input)
+   local n = input:len()
+   local i = 0
+
+   for k = 1, n do
+      local c = input:sub(k, k)
+
+      if c == '[' and i == 0 then
+         i = k
+      end
+
+      if c == ']' then
+         -- check if there is a group inside the set
+         local subinput = input:sub(i + 1, k - 1)
+
+         if tk_group(subinput) ~= nil then
+            local ends = input:sub(k + 1, k + 1)
+            local token = nil
+
+            if ends == '+' then
+               token = Token(i, k + 1, set_plus, input:sub(i, k), op_plus)
+               token.forbidden = forb_set
+
+            elseif ends == '*' then
+               token = Token(i, k + 1, set_star, input:sub(i, k), op_star)
+               token.forbidden = forb_set
+            else
+               token = Token(i, k, set, handle_ranges(subinput))
+            end
+
+            return token
+         end
+      end
+   end
 end
 
 local Tokens = {
-   --tk_group,
+   tk_fix_group_in_set,
+   tk_group_plus,
+   tk_group_star,
+   tk_group,
    tk_set_star,
    tk_set_plus,
    -- tk_set_comp,
@@ -516,7 +606,7 @@ end
 
 -- TODO: remove parameter nfa
 local function compile_aux(token, nfa, operation)
-   -- print(token, operation)
+   print(token, operation)
 
    local childs = token.childs
    local ttype  = token.type
