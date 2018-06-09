@@ -1,5 +1,7 @@
 # Lua-Reg Changelog
 
-## (0.0) 03/06/2018:
+## (0.01) 09/06/2018:
 - added: group, group star, group plus
-- introduced fix for groups inside a set
+- added token-rule to fix groups inside a set
+- fixed a bug inside tk_sets
+- code clean-up and optimization for tk_sets and tk_groups
