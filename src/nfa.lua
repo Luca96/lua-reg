@@ -392,9 +392,17 @@ function Nfa.plus(m)
    return Nfa.new { edges = edges, accepting = accepting, states = m.numStates }
 end
 
--- function Nfa.qmark(m)
--- -- recognize L(m)? (0 or 1)
--- end
+function Nfa.optional(m)
+-- make the given nfa recognize L(m)? (0 or 1)
+   local start = m.edges[1]
+
+   -- connect start state to accepting states
+   m.accepting:eachi(function(state, edges)
+      add_edge(edges, 1, e, { state })
+   end, m.edges)
+
+   return m   
+end
 
 mt.__add = Nfa.union
 mt.__concat = Nfa.concat

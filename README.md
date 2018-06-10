@@ -14,16 +14,11 @@ View the `changelog` for more info about changes.
 To install the library just `clone` the repo and install [LuaTable](https://github.com/Luca96/lua-table#installation).
 
 ## Working features:
-- sets: `[abc], [abc]*, [abc]+`
+- quantifiers: `*, +, ?` 
+- sets: `[abc]`
 - ranges: `[0-9], [a-zA-Z]`
-- groups: `(abc[0-9]abc), (a[0-9]a)*, (a[0-9]a)+`
+- groups: `(abc[0-9]abc)`
 - groups inside groups: `(00(abc)*00)` 
-
-## Planned features:
-- set complement
-- optionals
-- unions
-- ecc...
 
 ## Examples
 ```lua
@@ -34,9 +29,9 @@ local r1 = Reg "[a-zA-Z]+ [0-9]+"
 print(r1:matches "August 19")
 print(r1:matches "June 4")
 
-local r2 = Reg "[0-9][0-9]:[0-9][0-9]"
+local r2 = Reg "[0-9]?[0-9]:[0-9][0-9]"
 print(r2:matches "10:20")
-print(r2:matches "00:00")
+print(r2:matches "1:00")
 
 -- groups
 local reg = Regex "([A-Z]/[0-9]+/[A-Z])+"

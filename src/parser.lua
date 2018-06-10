@@ -36,6 +36,7 @@ local setmetatable = setmetatable
 local getmetatable = getmetatable 
 
 local err  = "\27[1;31mError:\27[0m"
+local epsilon = Nfa.epsilon
 -------------------------------------------------------------------------------
 -- CLASS
 -------------------------------------------------------------------------------
@@ -49,6 +50,7 @@ local reserved = {
    [')'] = true,
    ['*'] = true,
    ['+'] = true,
+   ['?'] = true,
    -- ['{'] = true,
    -- ['}'] = true,
 }
@@ -89,13 +91,16 @@ Token = setmetatable(Token, token_mt)
 local char      = "char"
 local char_star = "char_star"
 local char_plus = "char_plus"
+local char_opt  = "char_optional"
 local set       = "set"
 local set_star  = "set_star"
 local set_plus  = "set_plus"
 local set_comp  = "set_comp"
+local set_opt   = "set_optional"
 local group     = "group"
 local grp_star  = "group_star"
 local grp_plus  = "group_plus"
+local grp_opt   = "group_optional"
 -------------------------------------------------------------------------------
 -- token operation constants
 -------------------------------------------------------------------------------
@@ -104,10 +109,19 @@ local op_union  = "op_union"
 local op_star   = "op_star"
 local op_plus   = "op_plus"
 local op_comp   = "op_comp"
+local op_opt    = "op_optional"
 -------------------------------------------------------------------------------
 -- token forbidden types
 -------------------------------------------------------------------------------
-local forb_set = Table(char_star, char_plus, group, grp_star, grp_plus)
+local forb_set = Table (
+   char_star, 
+   char_plus, 
+   char_opt , 
+   group    , 
+   grp_star , 
+   grp_plus , 
+   grp_opt
+)
  -------------------------------------------------------------------------------
 function Token:isSimple()
    return self.type == char      or 
@@ -242,6 +256,24 @@ local function tk_char_plus(input)
    end   
 end
 
+local function tk_char_opt(input)
+   local size = input:len()
+   local prev = ''
+   
+   for k = 1, size do
+      local c = input:sub(k, k)
+
+      if c == '?' then
+         if not reserved[prev] then
+            k = k - 1
+            return Token(k, k + 1, char_opt, input:sub(k, k), op_opt)
+         end
+      end
+
+      prev = c
+   end   
+end
+
 local function tk_sets(input)
    local n = input:len()
    local i, j = 0, 0
@@ -274,6 +306,10 @@ local function tk_sets(input)
 
    elseif ends == "+" then
       token = Token(i, k, set_plus, input:sub(i, j), op_plus)
+      token.forbidden = forb_set
+
+   elseif ends == "?" then
+      token = Token(i, k, set_opt, input:sub(i, j), op_opt)
       token.forbidden = forb_set
 
    else
@@ -343,6 +379,9 @@ local function tk_groups(input)
    elseif ends == '+' then
       return Token(i, k, grp_plus, input:sub(i, j), op_plus)
 
+   elseif ends == '?' then
+      return Token(i, k, grp_opt, input:sub(i, j), op_opt)
+
    else
       return Token(i, j, group, input:sub(i + 1, j - 1), op_concat)
    end
@@ -369,6 +408,7 @@ local Tokens = {
    tk_sets,
    tk_char_star,
    tk_char_plus,
+   tk_char_opt,
    tk_char,
 }
 -------------------------------------------------------------------------------
@@ -463,7 +503,7 @@ local function nfa_set(chars)
    local nfa = Nfa.new {
       states = 1 + len + len, 
       edges  = {
-         [1] = { [Nfa.epsilon] = Table.new(len, Table.increase) }
+         [1] = { [epsilon] = Table.new(len, Table.increase) }
       },
       accepting = Table.new(len, function(a) return a + len + 1 end)
    }
@@ -533,6 +573,9 @@ local function compile_aux(token, nfa, operation)
 
          elseif op_plus == operation then
             m1 = m2:plus()
+
+         elseif op_opt == operation then
+            m1 = m2:optional()  
 
          elseif op_union == operation then
             m1 = m1 + m2
