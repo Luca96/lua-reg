@@ -272,6 +272,20 @@ function Nfa:isEmpty()
 -- check if the nfa has no edges
    return #self.edges == 0
 end
+
+function Nfa:copy()
+-- return a new nfa that is the exact copy of the current nfa
+   local edges = Table()
+   local accepting = Table()
+
+   copy_states(edges, self, 0)
+   copy_accepting(accepting, self, 0)
+
+   -- reject state
+   copy_reject(edges, self)
+
+   return Nfa.new { edges = edges, accepting = accepting, states = self.numStates }
+end
 -------------------------------------------------------------------------------
 -- UNION, CONCATENATION, STAR
 -------------------------------------------------------------------------------
@@ -346,7 +360,7 @@ function Nfa.concat(m1, m2)
 end
 
 function Nfa.star(m)
--- creates a new nfa that recognize L(m)*
+-- creates a new nfa recognize L(m)*
    local edges = Table()
    local start = { 2 }
 
@@ -372,39 +386,90 @@ function Nfa.star(m)
    return Nfa.new { edges = edges, accepting = accepting, states = m.numStates + 1 }
 end
 
-function Nfa.plus(m)
--- creates a new nfa that recognize L(m)+
-   local edges = Table()
+function Nfa:plus()
+-- make the current nfa recognize L(m)+
+   local edges = self.edges
    local start = { 1 }
-   local accepting = Table()
-
-   copy_states(edges, m, 0)
-   copy_accepting(accepting, m, 0)
-
-   -- reject state
-   copy_reject(edges, m)
+   local accepting = self.accepting
 
    -- connect accepting states with start state
    accepting:eachi(function(state)
       add_edge(edges, state, e, start)
    end)
 
-   return Nfa.new { edges = edges, accepting = accepting, states = m.numStates }
+   return self
 end
 
-function Nfa.optional(m)
--- make the given nfa recognize L(m)? (0 or 1)
-   local start = m.edges[1]
+function Nfa:optional()
+-- make the current nfa recognize L(m)? (0 or 1)
+   local edges = self.edges
+   local start = edges[1]
 
    -- connect start state to accepting states
-   m.accepting:eachi(function(state, edges)
+   self.accepting:eachi(function(state)
       add_edge(edges, 1, e, { state })
-   end, m.edges)
+   end)
 
-   return m   
+   return self  
 end
 
-mt.__add = Nfa.union
+function Nfa:times(x, y)
+-- make the current nfa recognize L(m){x, y}
+   if x == nil and y == nil then
+      return self
+   end
+
+   if x == y then
+      -- concat x - 1 times
+      local m = self
+
+      for i = 1, x - 1 do
+         self = self .. m
+      end
+
+   elseif not y then
+      -- concat x - 2 times + star
+      local m = self
+
+      for i = 1, x - 1 do
+         self = self .. m
+      end
+
+      self = self .. m:star()
+
+   else
+      local m = self
+      local z = y - x
+      local a = Table()
+
+      --
+      for i = 1, x - 1 do
+         self = self .. m
+      end
+
+      a:append(unpack(self.accepting))
+
+      for i = 1, z - 1 do
+         self = self .. m
+         a:append(unpack(self.accepting))
+      end
+
+      self = self .. m
+      --
+
+      -- add epsilon-transition from saved acc. states to final states
+      local edges = self.edges
+      local final = self.accepting
+
+      a:unique():eachi(function(state)
+         add_edge(edges, state, e, final)
+      end)
+   end
+
+   return self
+end
+
+mt.__add    = Nfa.union
 mt.__concat = Nfa.concat
 -------------------------------------------------------------------------------
 return Nfa

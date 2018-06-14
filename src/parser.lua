@@ -31,12 +31,27 @@ local abs    = math.abs
 local s_char = string.char 
 local format = string.format 
 local unpack = unpack 
+local error_ = error 
+local assert = assert 
 local tostring = tostring 
+local tonumber = tonumber 
 local setmetatable = setmetatable 
 local getmetatable = getmetatable 
 
-local err  = "\27[1;31mError:\27[0m"
+local err  = "\27[1;31mError: \27[0m"
+local warn = "\27[1;33mWarning: \27[0m"
 local epsilon = Nfa.epsilon
+
+-------------------------------------------------------------------------------
+-- errors, warnings, assertions
+-------------------------------------------------------------------------------
+local function warning(message)
+   print(warn .. message)
+end
+
+local function error(message)
+   error_(err .. message)
+end
 -------------------------------------------------------------------------------
 -- CLASS
 -------------------------------------------------------------------------------
@@ -51,8 +66,8 @@ local reserved = {
    ['*'] = true,
    ['+'] = true,
    ['?'] = true,
-   -- ['{'] = true,
-   -- ['}'] = true,
+   ['{'] = true,
+   ['}'] = true,
 }
 -------------------------------------------------------------------------------
 -- Token
@@ -62,29 +77,34 @@ local Token = {}
 local token_mt = {
    __index = Token,
    
-   __call  = function(self, start, ends, type, value, op)
-      local mt = getmetatable(self)
-
-      self = {
-         start = start,
-         ends  = ends,
-         type  = type,
-         value = value,
-         childs = Table(),
-         forbidden = Table(),  -- not allowed childs's type
-         operation = op or '',
-      }
-      
-      return setmetatable(self, mt)
-   end,
-
-   __tostring = function(self)
-      return format("Token (i: %d j: %d t: %s, v: %s, op: %s)", 
-         self.start, self.ends, self.type, self.value, self.operation)
+   __tostring = function(t)
+      return format(
+         "Token (i: %d j: %d t: %s, v: %s, op: %s)", 
+         t.start, 
+         t.ends, 
+         t.type, 
+         t.value, 
+         t.operation)
    end,
 }
 
-Token = setmetatable(Token, token_mt)
+function Token.new(i, j, t, v, o)
+-- creates a new token object
+   local self = {
+      start     = i,
+      ends      = j,
+      type      = t,
+      value     = v,
+      childs    = Table(),
+      forbidden = Table(),  -- not allowed childs's type
+      operation = o or '',
+   }
+
+   return setmetatable(self, token_mt)
+end
+
+Token = setmetatable(Token, 
+   { __call = function(self, ...) return Token.new(...) end })
 -------------------------------------------------------------------------------
 -- Token type constants 
 -------------------------------------------------------------------------------
@@ -97,10 +117,12 @@ local set_star  = "set_star"
 local set_plus  = "set_plus"
 local set_comp  = "set_comp"
 local set_opt   = "set_optional"
+local set_times = "set_times"
 local group     = "group"
 local grp_star  = "group_star"
 local grp_plus  = "group_plus"
 local grp_opt   = "group_optional"
+local grp_times = "group_times"
 -------------------------------------------------------------------------------
 -- token operation constants
 -------------------------------------------------------------------------------
@@ -110,6 +132,7 @@ local op_star   = "op_star"
 local op_plus   = "op_plus"
 local op_comp   = "op_comp"
 local op_opt    = "op_optional"
+local op_times  = "op_times" 
 -------------------------------------------------------------------------------
 -- token forbidden types
 -------------------------------------------------------------------------------
@@ -185,7 +208,7 @@ local function build_range(range)
    end
 
    if j < i or interval == false then
-      error(format("%s Invalid range %s-%s at position %d", err, range[2], range[3], k))
+      error(format("Invalid range %s-%s at position %d", range[2], range[3], k))
    end
 
    for k = i, j do
@@ -208,6 +231,71 @@ local function handle_ranges(input)
    end
 
    return format(input, unpack(words))
+end
+
+local function handle_times(input, i)
+   -- handle quantifiers like: {n}, {n,} and {n, m}
+   local j = 0
+   local h = 0
+   local n = input:len()
+
+   for k = i, n do
+      local c = input:sub(k, k)
+
+      if c == ',' then
+         if h == 0 then
+            h = k
+         else
+            warning("possible bad quantifier in " .. input)
+            return
+         end
+      end
+
+      if c == '}' and j == 0 then
+         j = k
+         break
+      end
+   end
+
+   local d = j - i + 1
+
+   if h == 0 then
+      -- no comma (1 number)
+      local n = tonumber(input:sub(i, j - 1))
+
+      if n == nil then
+         error("for quantifier {n} in " .. input .. ", n must be specified!")
+
+      elseif n <= 0 then
+         error("bad number for quantifier {n} in " .. input .. ", n must be > 0!")
+      end
+
+      return n, n, d
+
+   else
+      -- comma and 2 numbers
+      local n = tonumber(input:sub(i, h - 1))
+      local m = tonumber(input:sub(h + 1, j - 1))
+
+      if n == nil and m == nil then
+         error("for quantifier {n, m} in " .. input .. ", specify at least n or m")
+
+      elseif m and n then 
+         
+         if n <= 0 and m <= 0 then
+            error("bad numbers for quantifier {n, m} in " .. input .. ", n and m must be > 0!")
+         
+         elseif m < n then
+            error("bad numbers for quantifier {n, m} in " .. input .. ", n must be <= m!")
+         end   
+      end 
+
+      if m and (m > 0 and n == nil) then
+         return 1, m, d 
+      end
+
+      return n, m, d
+   end
 end
 -------------------------------------------------------------------------------
 -- Tokens definitions
@@ -312,41 +400,26 @@ local function tk_sets(input)
       token = Token(i, k, set_opt, input:sub(i, j), op_opt)
       token.forbidden = forb_set
 
+   elseif ends == "{" then 
+      token = Token(i, j, set, nil)
+      local n, m, d = handle_times(input, k + 1)
+
+      if n or m then
+         token.min = n
+         token.max = m
+         token.ends = k + d
+         token.value = input:sub(i, j) 
+         token.type  = set_times
+         token.operation = op_times
+      else
+         token.input = handle_ranges(input:sub(i + 1, j - 1))
+      end
+
    else
       token = Token(i, j, set, handle_ranges(input:sub(i + 1, j - 1)))
    end
 
    return token
-end
-
-local function tk_set_comp(input)
-   local len  = input:len()
-   local i, j = 0, 0
-
-   for k = 1, len do
-      local c = input:sub(k, k)
-
-      if c == '[' and i == 0 then
-         i = k
-      end
-
-      if c == ']' then
-         j = k
-         break
-      end
-   end
-
-   if i == 0 or j == 0 or i >= j then
-      return nil
-   end
-
-   if input:sub(i + 1, i + 1) == '^' then
-      local value = input:sub(i, i) .. input:sub(i + 2, j)
-      local token = Token(i, j + 1, set_comp, value, op_comp)
-      token.forbidden = forb_set
-
-      return token
-   end
 end
 
 local function tk_groups(input)
@@ -382,6 +455,23 @@ local function tk_groups(input)
    elseif ends == '?' then
       return Token(i, k, grp_opt, input:sub(i, j), op_opt)
 
+   elseif ends == "{" then
+      local token = Token(i, j, group, nil, op_concat)
+      local n, m, d = handle_times(input, k + 1)
+
+      if n or m then
+         token.min = n
+         token.max = m
+         token.ends = k + d
+         token.value = input:sub(i, j) 
+         token.type  = grp_times
+         token.operation = op_times
+      else
+         token.input = input:sub(i + 1, j - 1)
+      end
+
+      return token
+
    else
       return Token(i, j, group, input:sub(i + 1, j - 1), op_concat)
    end
@@ -404,7 +494,6 @@ end
 local Tokens = {
    tk_fix_gis,
    tk_groups,
-   -- tk_set_comp,
    tk_sets,
    tk_char_star,
    tk_char_plus,
@@ -550,19 +639,18 @@ function Parser:parse()
    self.tree = tree
 end
 
--- TODO: remove parameter nfa
-local function compile_aux(token, nfa, operation)
+local function compile_aux(token, operation)
    -- print(token, operation)
 
    local childs = token.childs
-   local ttype  = token.type
+   local tktype = token.type
    local tvalue = token.value
 
    if childs:notEmpty() then
       local m1 = Nfa.new()
 
       childs:eachi(function(tok)
-         local m2 = compile_aux(tok, nil, tok.operation)
+         local m2 = compile_aux(tok, tok.operation)
 
          -- build nfa from complex tokens
          if op_concat == operation then
@@ -582,6 +670,9 @@ local function compile_aux(token, nfa, operation)
 
          elseif op_comp == operation then
             m1 = m2:negation()
+         
+         elseif op_times == operation then
+            m1 = m2:times(token.min, token.max)
          end
       end)
 
@@ -589,16 +680,16 @@ local function compile_aux(token, nfa, operation)
    end
    
    -- build basic nfa from a simple token
-   if ttype == char then
+   if tktype == char then
       nfa = nfa_char(tvalue)
 
-   elseif ttype == char_star then
+   elseif tktype == char_star then
       nfa = nfa_char_star(tvalue)
 
-   elseif ttype == char_plus then
+   elseif tktype == char_plus then
       nfa = nfa_char_plus(tvalue)
 
-   elseif ttype == set then
+   elseif tktype == set then
       nfa = nfa_set(tvalue)
    end
 
@@ -610,7 +701,7 @@ function Parser:compile()
    local nfa = Nfa.new()
 
    self.tree:eachi(function(tok)
-      nfa = nfa .. compile_aux(tok, nil, tok.operation)
+      nfa = nfa .. compile_aux(tok, tok.operation)
    end)
 
    return nfa

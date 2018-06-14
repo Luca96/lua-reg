@@ -5,5 +5,6 @@
 - added token-rule to fix groups inside a set
 - fixed a bug inside tk_sets
 - code clean-up and optimization for tk_sets and tk_groups
-- added new quantifier: ?
+- new quantifier: ?
 - new token-rules: char_opt, set_opt, grp_opt
+- added new quantifiers: {n}, {n, m}, {,n}, {n,} and corresponding tokens

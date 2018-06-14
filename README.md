@@ -14,7 +14,7 @@ View the `changelog` for more info about changes.
 To install the library just `clone` the repo and install [LuaTable](https://github.com/Luca96/lua-table#installation).
 
 ## Working features:
-- quantifiers: `*, +, ?` 
+- quantifiers: `*, +, ?, {n}, {n, m}, {,n}, {n,}` 
 - sets: `[abc]`
 - ranges: `[0-9], [a-zA-Z]`
 - groups: `(abc[0-9]abc)`
@@ -25,22 +25,29 @@ To install the library just `clone` the repo and install [LuaTable](https://gith
 local Reg = require "luareg"
 
 -- sets
-local r1 = Reg "[a-zA-Z]+ [0-9]+"
-print(r1:matches "August 19")
-print(r1:matches "June 4")
+local r = Reg "[a-zA-Z]+ [0-9]+"
+print(r:matches "August 19")
+print(r:matches "June 4")
 
-local r2 = Reg "[0-9]?[0-9]:[0-9][0-9]"
-print(r2:matches "10:20")
-print(r2:matches "1:00")
+local r = Reg "[0-9]?[0-9]:[0-9][0-9]"
+print(r:matches "10:20")
+print(r:matches "1:00")
 
 -- groups
-local reg = Regex "([A-Z]/[0-9]+/[A-Z])+"
-print(reg:matches "A/1234/A")
-print(reg:matches "Z/00/ZA/1010/A")
+local r = Reg "([A-Z]/[0-9]+/[A-Z])+"
+print(r:matches "A/1234/A")
+print(r:matches "Z/00/ZA/1010/A")
 
-local reg = Regex "(00(abc)*00)"
-print(reg:matches "0000")
-print(reg:matches "00abc00")
-print(reg:matches "00abcabc00")
+local r = Reg "(00(abc)*00)"
+print(r:matches "0000")
+print(r:matches "00abc00")
+print(r:matches "00abcabc00")
+
+-- quantifiers
+local r = Reg "[ab]{2, 4}(zz){,2}"
+print(r:matches "abzzzz")
+print(r:matches "aazz")
+print(r:matches "abazz")
+print(r:matches "abbbzz")
 
 ```
