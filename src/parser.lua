@@ -27,6 +27,7 @@ local Table = require "luatable"
 local Nfa   = require "nfa"
 -------------------------------------------------------------------------------
 local type   = type 
+local pairs  = pairs 
 local abs    = math.abs 
 local s_char = string.char 
 local format = string.format 
@@ -103,8 +104,19 @@ function Token.new(i, j, t, v, o)
    return setmetatable(self, token_mt)
 end
 
+function Token:copy(other)
+-- copy the content of self into other
+   for k, v in pairs(self) do
+      other[k] = v
+   end
+end
+
 Token = setmetatable(Token, 
    { __call = function(self, ...) return Token.new(...) end })
+
+-- group backreferences:
+local group_list = Table()
+local back_list  = Table()
 -------------------------------------------------------------------------------
 -- Token type constants 
 -------------------------------------------------------------------------------
@@ -123,6 +135,7 @@ local grp_star  = "group_star"
 local grp_plus  = "group_plus"
 local grp_opt   = "group_optional"
 local grp_times = "group_times"
+local g_backref = "group_backreference"
 -------------------------------------------------------------------------------
 -- token operation constants
 -------------------------------------------------------------------------------
@@ -143,15 +156,9 @@ local forb_set = Table (
    group    , 
    grp_star , 
    grp_plus , 
-   grp_opt
+   grp_opt  ,
+   g_backref
 )
- -------------------------------------------------------------------------------
-function Token:isSimple()
-   return self.type == char      or 
-          self.type == char_star or 
-          self.type == char_plus or 
-          self.type == set
-end
 -------------------------------------------------------------------------------
 -- Ranges:
 -------------------------------------------------------------------------------
@@ -302,10 +309,11 @@ end
 -------------------------------------------------------------------------------
 local function tk_char(input)
    if input:len() > 0 then
-      return Token(1, 1, char, input:sub(1, 1))
-   end
+      local token = Token(1, 1, char, input:sub(1, 1))
+      token.isSimple = true
 
-   return nil
+      return token
+   end
 end
 
 local function tk_char_star(input)
@@ -318,7 +326,11 @@ local function tk_char_star(input)
       if c == '*' then
          if not reserved[prev] then
             k = k - 1
-            return Token(k, k + 1, char_star, input:sub(k, k))
+            
+            local token = Token(k, k + 1, char_star, input:sub(k, k))
+            token.isSimple = true
+
+            return token
          end
       end
 
@@ -336,7 +348,11 @@ local function tk_char_plus(input)
       if c == '+' then
          if not reserved[prev] then
             k = k - 1
-            return Token(k, k + 1, char_plus, input:sub(k, k))
+            
+            local token = Token(k, k + 1, char_plus, input:sub(k, k))
+            token.isSimple = true
+
+            return token
          end
       end
 
@@ -360,6 +376,36 @@ local function tk_char_opt(input)
 
       prev = c
    end   
+end
+
+local function tk_backref(input)
+   local n = input:len()
+
+   for i = 1, n do
+      local c = input:sub(i, i)
+      local k = nil
+
+      if c == '\1' then
+         k = 1
+      elseif c == '\2' then
+         k = 2
+      elseif c == '\3' then
+         k = 3
+      elseif c == '\4' then
+         k = 4
+      elseif c == '\5' then
+         k = 5
+      end
+
+      if k then
+         local token = Token(i, i, g_backref, '\\' .. k)
+         token.index = k
+
+         back_list:append(token)
+
+         return token
+      end
+   end
 end
 
 local function tk_sets(input)
@@ -412,11 +458,13 @@ local function tk_sets(input)
          token.type  = set_times
          token.operation = op_times
       else
-         token.input = handle_ranges(input:sub(i + 1, j - 1))
+         token.value = handle_ranges(input:sub(i + 1, j - 1))
+         token.isSimple = true
       end
 
    else
       token = Token(i, j, set, handle_ranges(input:sub(i + 1, j - 1)))
+      token.isSimple = true
    end
 
    return token
@@ -425,16 +473,26 @@ end
 local function tk_groups(input)
    local len  = input:len()
    local i, j = 0, 0
+   local h = 0
 
    for k = 1, len do
       local c = input:sub(k, k)
 
-      if c == '(' and i == 0 then
-         i = k
-      end
+      if c == '(' then
+         h = h + 1
 
-      if c == ')' then
-         j = k
+         if i == 0 then
+            i = k
+         end
+
+      elseif c == ')' then
+         h = h - 1
+
+         if h == 0 then
+            -- parenthesis are balanced (we have a valid group)
+            j = k
+            break
+         end
       end
    end
 
@@ -444,19 +502,20 @@ local function tk_groups(input)
 
    --
    local k = j + 1
-   local ends = input:sub(k, k)
+   local ends  = input:sub(k, k)
+   local token = nil
 
    if ends == '*' then
-      return Token(i, k, grp_star, input:sub(i, j), op_star) 
+      token = Token(i, k, grp_star, input:sub(i, j), op_star) 
 
    elseif ends == '+' then
-      return Token(i, k, grp_plus, input:sub(i, j), op_plus)
+      token = Token(i, k, grp_plus, input:sub(i, j), op_plus)
 
    elseif ends == '?' then
-      return Token(i, k, grp_opt, input:sub(i, j), op_opt)
+      token = Token(i, k, grp_opt, input:sub(i, j), op_opt)
 
    elseif ends == "{" then
-      local token = Token(i, j, group, nil, op_concat)
+      token = Token(i, j, group, nil, op_concat)
       local n, m, d = handle_times(input, k + 1)
 
       if n or m then
@@ -467,14 +526,19 @@ local function tk_groups(input)
          token.type  = grp_times
          token.operation = op_times
       else
-         token.input = input:sub(i + 1, j - 1)
+         token.value = input:sub(i + 1, j - 1)
       end
 
-      return token
-
    else
-      return Token(i, j, group, input:sub(i + 1, j - 1), op_concat)
+      token = Token(i, j, group, input:sub(i + 1, j - 1), op_concat)
    end
+
+   token.isGroup = true
+
+   -- for backreference
+   group_list:append(token)
+
+   return token
 end
 
 local function tk_fix_gis(input)
@@ -498,6 +562,7 @@ local Tokens = {
    tk_char_star,
    tk_char_plus,
    tk_char_opt,
+   tk_backref,
    tk_char,
 }
 -------------------------------------------------------------------------------
@@ -524,10 +589,6 @@ local function tokenize(input, forbidden)
    if tok then
       local i = tok.start - 1
       local j = tok.ends  + 1
-
-      if i < 0 then
-         i = 0
-      end
 
       local before = tokenize(input:sub(1, i), forbidden)
       local after  = tokenize(input:sub(j, len), forbidden)
@@ -628,7 +689,7 @@ function Parser:parse()
       local token = fifo:head()
       local ttype = token.type
 
-      if not token:isSimple() then
+      if not token.isSimple then
          local tokens = tokenize(token.value, token.forbidden)
          token.childs = tokens
 
@@ -640,7 +701,7 @@ function Parser:parse()
 end
 
 local function compile_aux(token, operation)
-   -- print(token, operation)
+   print(token, operation)
 
    local childs = token.childs
    local tktype = token.type
@@ -699,6 +760,25 @@ end
 function Parser:compile()
 -- build an nfa from a tree-of-tokens
    local nfa = Nfa.new()
+
+   -- replace backref. tokens with referenced groups
+   group_list:eachi(print)
+   print "------"
+   for i = 1, #back_list do
+      local token = back_list[i]
+      local index = token.index 
+      local group = group_list[index]
+
+      if group == nil then
+         error("wrong group-backreference for group index: " .. index)
+      else
+         group:copy(token)
+         token.type = g_backref .. index
+      end
+   end
+
+   group_list:clear()
+   back_list:clear()
 
    self.tree:eachi(function(tok)
       nfa = nfa .. compile_aux(tok, tok.operation)

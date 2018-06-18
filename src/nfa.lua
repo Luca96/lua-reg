@@ -51,36 +51,47 @@ local mt  = { __index = Nfa }
 -------------------------------------------------------------------------------
 -- private functions
 -------------------------------------------------------------------------------
-local function epsilon_closure(self, set)
-   -- compute the epsilon closure of set
-   local fifo = Table()
+local function epsilon_closure(self, states)
+   -- compute the epsilon closure of a set of states
+   local fifo = Table(states)
+   local size = #states
 
-   if #set == 0 then -- to avoid warnings
+   if size == 0 then
       return Table()
    end
-   
-   fifo:append(unpack(set))
 
-   set = {}
+   local visited = {}
+   local closure = Table()
+   local edges = self.edges
+   local n = #fifo
+   local k = 1
 
-   while fifo:notEmpty() do
-      local state = fifo:head()
-      set[state]  = true
+   local base = 1
+   local top  = #fifo 
 
-      local transt = self.edges[state] or {}
-      local states = transt[e] or {}
-      local len = #states
+   while base <= top do
+      local state = fifo[base]
+      base = base + 1
+      
+      if not visited[state] then
+         visited[state] = true
+         closure[k] = state
+         k = k + 1
 
-      for i = 1, len do
-         local state = states[i]
+         local states = (edges[state] or {})[e]
 
-         if not set[state] then
-            fifo:append(state)
+         if states then
+
+            for i = 1, #states do
+               local state = states[i]
+               top = top + 1
+               fifo[top] = states[i]
+            end
          end
       end
    end
 
-   return TkeyList(set)
+   return closure
 end
 
 local function computation_of(self, word)
@@ -90,11 +101,11 @@ local function computation_of(self, word)
    if len == 0 or current == reject then  
       return epsilon_closure(self, { self.current })
    end
-
+   
    local char = word:sub(len, len)
    local states = computation_of(self, word:sub(1, len - 1))
    local new_states = Table()
-
+   
    for i = 1, #states do
       local state = states[i]
       local edges = self.edges[state] or {}
