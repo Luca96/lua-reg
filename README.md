@@ -1,4 +1,4 @@
-# Lua-Reg 0.01
+# Lua-Reg 0.02
 A Regular Expression Engine for Lua. 
 
 ## Warning!
@@ -63,5 +63,6 @@ print(reg:matches "ab123000ab123123")
 -- \5: refer to (123)
 
 -- findall
-
+local reg = Regex "[0-9]+"
+print(reg:findall "123, 456, 1000, 1900")
 ```

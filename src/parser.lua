@@ -702,7 +702,7 @@ function Parser:parse()
 end
 
 local function compile_aux(token, operation)
-   print(token, operation)
+   -- print(token, operation)
 
    local childs = token.childs
    local tktype = token.type
