@@ -563,7 +563,7 @@ local function tk_or(input)
    local c = input:sub(1, 1)
    
    if c == '|' then
-      local token = Token(1, 1, grp_union, c, op_union)
+      local token = Token(1, 1, grp_union, c)
       token.isSimple = true
 
       return token
@@ -773,7 +773,7 @@ local function compile_aux(token, operation)
    return nfa
 end
 
-local function pre()
+local function before_compile()
    -- check for tk_or inside groups
    for i = 1, #group_list do
       local group  = group_list[i]
@@ -795,10 +795,21 @@ local function pre()
       end
 
       if count == 1 and #indexs > 0 then
+         -- the '|' are balanced like: (A|B|C)
          group.operation = op_union
 
+         -- remove '|' tokens
          for i = #indexs, 1, -1 do
             remove(childs, indexs[i])
+         end
+      else
+         -- threat the '|' token as char token
+         for i = 1, #childs do
+            local tok = childs[i]
+
+            if tok.type == grp_union then
+               tok.type = char
+            end
          end
       end
    end
@@ -825,7 +836,7 @@ function Parser:compile()
 -- build an nfa from a tree-of-tokens
    local nfa = Nfa.new()
 
-   pre()
+   before_compile()
 
    self.tree:eachi(function(tok)
       nfa = nfa .. compile_aux(tok, tok.operation)
