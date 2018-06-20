@@ -69,6 +69,7 @@ local reserved = {
    ['?'] = true,
    ['{'] = true,
    ['}'] = true,
+   ['|'] = true,
 }
 -------------------------------------------------------------------------------
 -- Token
@@ -135,7 +136,7 @@ local grp_star  = "group_star"
 local grp_plus  = "group_plus"
 local grp_opt   = "group_optional"
 local grp_times = "group_times"
-local g_backref = "group_backreference"
+local g_backref = "group_backref"
 -------------------------------------------------------------------------------
 -- token operation constants
 -------------------------------------------------------------------------------
@@ -149,7 +150,7 @@ local op_times  = "op_times"
 -------------------------------------------------------------------------------
 -- token forbidden types
 -------------------------------------------------------------------------------
-local forb_set = Table (
+local forb_set = Table {
    char_star, 
    char_plus, 
    char_opt , 
@@ -158,11 +159,11 @@ local forb_set = Table (
    grp_plus , 
    grp_opt  ,
    g_backref
-)
+}
 -------------------------------------------------------------------------------
 -- Ranges:
 -------------------------------------------------------------------------------
-local range_intervals = Table(
+local range_intervals = Table (
    48,  57 ,  --0-9
    65,  90 ,  --A-Z
    97,  122   --a-z

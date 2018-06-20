@@ -10,8 +10,9 @@
 - added new quantifiers: {n}, {n, m}, {,n}, {n,} and corresponding tokens
 
 ## (0.02) 17/06/2018:
-- optimize epsilon_closure of nfa, now is about 2x faster
+- optimized epsilon_closure of nfa, now is about 2x faster
 - fixed a bug into tk_groups (_token.input_ instead of _token.value_)
 - fixed a bug about the wrong behavior of tk_group (solved by balancing brakets)
 - added token-rules for group-backreference
 - now token:isSimple() is a property
+- added Reg:findall()
