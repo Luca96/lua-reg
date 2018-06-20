@@ -20,6 +20,7 @@ To install the library just `clone` the repo and install [LuaTable](https://gith
 - groups: `(abc[0-9]abc)`
 - groups inside groups: `(00(abc)*00)` 
 - group backreference: `(abc)\2(123)\1`
+- expressions union (or): `(A|B|C)`
 
 ## Examples
 ```lua
@@ -52,7 +53,7 @@ print(r:matches "abazz")
 print(r:matches "abbbzz")
 
 -- group backreference
-local reg = Regex "(ab(123))+\3(000)*\4\5"
+local reg = Reg "(ab(123))+\3(000)*\4\5"
 print(reg:matches "ab123000ab123123")
 
 -- how to backreference groups:
@@ -63,6 +64,6 @@ print(reg:matches "ab123000ab123123")
 -- \5: refer to (123)
 
 -- findall
-local reg = Regex "[0-9]+"
+local reg = Reg "[0-9]+"
 print(reg:findall "123, 456, 1000, 1900")
 ```

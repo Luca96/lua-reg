@@ -16,3 +16,5 @@
 - added token-rules for group-backreference
 - now token:isSimple() is a property
 - added Reg:findall()
+- fixed a bug into tk_char_star, tk_char_plus and tk_char_opt
+- implemented unions inside groups: `(A|B|C)`

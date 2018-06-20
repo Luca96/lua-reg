@@ -32,6 +32,7 @@ local abs    = math.abs
 local s_char = string.char 
 local format = string.format 
 local unpack = unpack 
+local remove = table.remove 
 local error_ = error 
 local assert = assert 
 local tostring = tostring 
@@ -115,7 +116,7 @@ end
 Token = setmetatable(Token, 
    { __call = function(self, ...) return Token.new(...) end })
 
--- group backreferences:
+-- for group backreference and union
 local group_list = Table()
 local back_list  = Table()
 -------------------------------------------------------------------------------
@@ -137,6 +138,7 @@ local grp_plus  = "group_plus"
 local grp_opt   = "group_optional"
 local grp_times = "group_times"
 local g_backref = "group_backref"
+local grp_union = "group_union"
 -------------------------------------------------------------------------------
 -- token operation constants
 -------------------------------------------------------------------------------
@@ -319,12 +321,12 @@ end
 
 local function tk_char_star(input)
    local size = input:len()
-   local prev = ''
+   local prev = nil
    
    for k = 1, size do
       local c = input:sub(k, k)
 
-      if c == '*' then
+      if c == '*' and prev then
          if not reserved[prev] then
             k = k - 1
             
@@ -341,12 +343,12 @@ end
 
 local function tk_char_plus(input)
    local size = input:len()
-   local prev = ''
+   local prev = nil
    
    for k = 1, size do
       local c = input:sub(k, k)
 
-      if c == '+' then
+      if c == '+' and prev then
          if not reserved[prev] then
             k = k - 1
             
@@ -363,14 +365,15 @@ end
 
 local function tk_char_opt(input)
    local size = input:len()
-   local prev = ''
+   local prev = prev
    
    for k = 1, size do
       local c = input:sub(k, k)
 
-      if c == '?' then
+      if c == '?' and prev then
          if not reserved[prev] then
             k = k - 1
+
             return Token(k, k + 1, char_opt, input:sub(k, k), op_opt)
          end
       end
@@ -556,10 +559,22 @@ local function tk_fix_gis(input)
    end
 end
 
+local function tk_or(input)
+   local c = input:sub(1, 1)
+   
+   if c == '|' then
+      local token = Token(1, 1, grp_union, c, op_union)
+      token.isSimple = true
+
+      return token
+   end
+end
+
 local Tokens = {
    tk_fix_gis,
    tk_groups,
    tk_sets,
+   tk_or,
    tk_char_star,
    tk_char_plus,
    tk_char_opt,
@@ -689,7 +704,7 @@ function Parser:parse()
    while fifo:notEmpty() do
       local token = fifo:head()
       local ttype = token.type
-
+      
       if not token.isSimple then
          local tokens = tokenize(token.value, token.forbidden)
          token.childs = tokens
@@ -758,13 +773,37 @@ local function compile_aux(token, operation)
    return nfa
 end
 
-function Parser:compile()
--- build an nfa from a tree-of-tokens
-   local nfa = Nfa.new()
+local function pre()
+   -- check for tk_or inside groups
+   for i = 1, #group_list do
+      local group  = group_list[i]
+      local childs = group.childs
+      local count  = 0
+      local indexs = Table()
+
+      for j = 1, #childs do
+         local tk_type = childs[j].type
+
+         if count == 0 and tk_type ~= grp_union then
+            count = 1
+         elseif count == 1 and tk_type == grp_union then
+            count = 0
+            indexs:append(j)
+         else
+            break
+         end
+      end
+
+      if count == 1 and #indexs > 0 then
+         group.operation = op_union
+
+         for i = #indexs, 1, -1 do
+            remove(childs, indexs[i])
+         end
+      end
+   end
 
    -- replace backref. tokens with referenced groups
-   group_list:eachi(print)
-   print "------"
    for i = 1, #back_list do
       local token = back_list[i]
       local index = token.index 
@@ -780,6 +819,13 @@ function Parser:compile()
 
    group_list:clear()
    back_list:clear()
+end
+
+function Parser:compile()
+-- build an nfa from a tree-of-tokens
+   local nfa = Nfa.new()
+
+   pre()
 
    self.tree:eachi(function(tok)
       nfa = nfa .. compile_aux(tok, tok.operation)
