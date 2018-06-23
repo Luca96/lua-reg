@@ -138,7 +138,7 @@ local grp_plus  = "group_plus"
 local grp_opt   = "group_optional"
 local grp_times = "group_times"
 local g_backref = "group_backref"
-local grp_union = "group_union"
+local token_or  = "token_or"
 -------------------------------------------------------------------------------
 -- token operation constants
 -------------------------------------------------------------------------------
@@ -306,6 +306,37 @@ local function handle_times(input, i)
 
       return n, m, d
    end
+end
+
+local function handle_or(group)
+   -- check if group contains some balanced unions
+   local tokens = group.childs
+   local size = #tokens
+   local list = {}
+   local k = 1
+
+   for i = 1, size do
+      local tok = tokens[i]
+
+      if tok.type == token_or then
+         -- check if prev and next tokens are not token_or
+         if i == 1 or i == size then
+            return {}         
+         else
+            local prev = tokens[i - 1]
+            local next = tokens[i + 1]
+
+            if prev.type == token_or or next.type == token_or then
+               return {}
+            else
+               list[k] = i
+               k = k + 1
+            end
+         end   
+      end
+   end
+
+   return list 
 end
 -------------------------------------------------------------------------------
 -- Tokens definitions
@@ -563,7 +594,7 @@ local function tk_or(input)
    local c = input:sub(1, 1)
    
    if c == '|' then
-      local token = Token(1, 1, grp_union, c)
+      local token = Token(1, 1, token_or, c)
       token.isSimple = true
 
       return token
@@ -776,38 +807,54 @@ end
 local function before_compile()
    -- check for tk_or inside groups
    for i = 1, #group_list do
+      -- TODO: for need optimization (avoid child of group)
       local group  = group_list[i]
+      local index  = handle_or(group)
+      local size   = #index
       local childs = group.childs
-      local count  = 0
-      local indexs = Table()
 
-      for j = 1, #childs do
-         local tk_type = childs[j].type
-
-         if count == 0 and tk_type ~= grp_union then
-            count = 1
-         elseif count == 1 and tk_type == grp_union then
-            count = 0
-            indexs:append(j)
-         else
-            break
-         end
-      end
-
-      if count == 1 and #indexs > 0 then
-         -- the '|' are balanced like: (A|B|C)
+      if size > 0 then
+         -- group contains unions, so:
          group.operation = op_union
 
-         -- remove '|' tokens
-         for i = #indexs, 1, -1 do
-            remove(childs, indexs[i])
+         local root = Table()
+         local c = 1
+
+         size = size + 1
+         index[size] = #childs + 1
+
+         -- rebuilt group.childs by adding tokens between '|'
+         for k = 1, size do
+            local t = Table()
+            local j = index[k] - 1
+
+            -- token info
+            local v = ""
+
+            for h = c, j do
+               local tok = childs[h]
+               v = v .. tok.value
+               t:append(tok)
+            end
+
+            c = j + 2
+
+            -- this will make parser concatenate tokens between '|'
+            local token  = Token(0, 0, token_or, v, op_concat)
+            token.childs = t
+
+            root:append(token)
          end
+
+         --
+         group.childs = root
+
       else
          -- threat the '|' token as char token
          for i = 1, #childs do
             local tok = childs[i]
 
-            if tok.type == grp_union then
+            if tok.type == token_or then
                tok.type = char
             end
          end
