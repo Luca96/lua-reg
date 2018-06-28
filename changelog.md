@@ -1,13 +1,7 @@
 # Lua-Reg Changelog
 
-## (0.01) 03/06/2018:
-- added: group, group star, group plus
-- added token-rule to fix groups inside a set
-- fixed a bug inside tk_sets
-- code clean-up and optimization for tk_sets and tk_groups
-- new quantifier: ?
-- new token-rules: char_opt, set_opt, grp_opt
-- added new quantifiers: {n}, {n, m}, {,n}, {n,} and corresponding tokens
+## (0.03) 28/06/2018:
+- added: Reg.find(), Reg.finder(), Reg.split()
 
 ## (0.02) 17/06/2018:
 - optimized epsilon_closure of nfa, now is about 2x faster
@@ -18,4 +12,13 @@
 - added Reg:findall()
 - fixed a bug into tk_char_star, tk_char_plus and tk_char_opt
 - implemented unions inside groups: `(A|B|C)`
-- some fix about unions
+- some fix about unions of expressions
+
+## (0.01) 03/06/2018:
+- added: group, group star, group plus
+- added token-rule to fix groups inside a set
+- fixed a bug inside tk_sets
+- code clean-up and optimization for tk_sets and tk_groups
+- new quantifier: ?
+- new token-rules: char_opt, set_opt, grp_opt
+- added new quantifiers: {n}, {n, m}, {,n}, {n,} and corresponding tokens

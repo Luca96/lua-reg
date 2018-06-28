@@ -1,4 +1,4 @@
-# Lua-Reg 0.02
+# Lua-Reg 0.03
 A Regular Expression Engine for Lua. 
 
 ## Warning!

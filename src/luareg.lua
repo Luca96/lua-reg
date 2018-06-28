@@ -44,12 +44,12 @@ local type   = type
 -- CLASS
 -------------------------------------------------------------------------------
 local Reg = {
-    __VERSION = "0.0",
+    __VERSION = "0.03",
     __INFO    = "Regular Expression Engine for Lua",
     __AUTHOR  = "Luca Anzalone",
 }
 
-local mt = { __index = Reg }
+local mt  = { __index = Reg }
 -------------------------------------------------------------------------------
 -- private functions
 -------------------------------------------------------------------------------
@@ -69,18 +69,133 @@ function Reg.new(input)
 
    return self
 end
+-------------------------------------------------------------------------------
+-- Methods
+-------------------------------------------------------------------------------
+function Reg:matches(str)
+-- returns true if the given string matches the regex
+   return self.nfa:compute(str)
+end
 
-local function init(self, input)
---
-   return Reg.new(input)
+function Reg:find(str)
+-- matches the first substring that satisfy the regex
+-- returns the maching substring with start index
+   str = str or ""
+   
+   local len, j = str:len(), 1
+
+   while len > 0 and j < len do
+      --
+      for i = len, j, -1 do
+         local sub = str:sub(j, i)
+
+         if self:matches(sub) then
+            return sub, j
+         end
+      end
+
+      for i = j, len do
+         local sub = str:sub(i, len)
+
+         if self:matches(sub) then
+            return sub, i
+         end
+      end
+
+      j = j + 1
+   end
+
+   return "", 0
+end
+
+function Reg:finder(str)
+-- return an iterator that finds every substring that matches
+   local s, i = nil, nil
+
+   return function()
+      s, i = self:find(str)
+      str  = str:sub(i + s:len() - 1)
+
+      if i <= 0 then
+         return
+      end
+
+      return s, i
+   end 
+end
+
+function Reg:findall(str)
+-- returns a list of substring that matches the regex
+   local list  = Table()
+   local len   = str:len()
+   local j     = 1
+   local match = false
+
+   while len > 0 and j < len do
+      match = false
+      --
+      for i = len, j, -1 do
+         local sub = str:sub(j, i)
+
+         if self:matches(sub) then
+            list:append(sub)
+
+            str = str:sub(i + 1, len)
+            len = str:len()
+
+            match = true
+            j = 1
+
+            break
+         end
+      end
+
+      if not match then
+         for i = j, len do
+            local sub = str:sub(i, len)
+
+            if self:matches(sub) then
+               list:append(sub)
+
+               str = str:sub(j, i - 1)
+               len = str:len()
+
+               match = true
+               j = 1
+
+               break
+            end
+         end
+      end
+
+      if not match then
+         j = j + 1
+      end
+   end
+
+   return list 
+end
+
+function Reg:split(str)
+-- returns a list of string obtained by splitting the input string
+   local list = Table()
+   local size = 0
+   local s, i = self:find(str) 
+
+   while i > 0 do
+      list:append(str:sub(0, i - 1))
+      
+      size = i + s:len()
+      str  = str:sub(size)
+      
+      s, i = self:find(str)
+   end
+
+   -- add the last sub of str after the last match
+   list:append(str:sub(size, str:len()))
+
+   return list
 end
 -------------------------------------------------------------------------------
--- Operations
--------------------------------------------------------------------------------
-function Reg:matches(word)
---  
-   return self.nfa:compute(word)
-end
--------------------------------------------------------------------------------
-return setmetatable(Reg, { __call = init })
+return setmetatable(Reg, { __call = function(t, ...) return Reg.new(...) end })
 -------------------------------------------------------------------------------
