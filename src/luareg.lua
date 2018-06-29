@@ -27,7 +27,6 @@ SOFTWARE.
 -------------------------------------------------------------------------------
 local Parser = require "parser"
 local Table  = require "luatable"
-local Nfa    = require "nfa"
 -------------------------------------------------------------------------------
 local setmetatable = setmetatable 
 local assert = assert 
@@ -58,7 +57,7 @@ local mt  = { __index = Reg }
 -- Constructors
 -------------------------------------------------------------------------------
 function Reg.new(input)
--- 
+-- parse and compile the given regex
    local self = setmetatable({}, mt)
    self.input = input or ""
 
@@ -176,23 +175,27 @@ function Reg:findall(str)
    return list 
 end
 
-function Reg:split(str)
+function Reg:split(str, remove_empty)
 -- returns a list of string obtained by splitting the input string
    local list = Table()
    local size = 0
    local s, i = self:find(str) 
 
    while i > 0 do
-      list:append(str:sub(0, i - 1))
+      list:append(str:sub(1, i - 1))
       
       size = i + s:len()
       str  = str:sub(size)
-      
       s, i = self:find(str)
    end
 
-   -- add the last sub of str after the last match
-   list:append(str:sub(size, str:len()))
+   -- add the last substring after the last match
+   list:append(str)
+
+   if remove_empty then
+      -- remove all the empty string
+      return list:reject(function(s) return s:len() <= 0 end)
+   end
 
    return list
 end

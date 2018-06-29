@@ -6,6 +6,7 @@ Currently the module is `under development`, so it is:
 - __unfinished__
 - __unoptimized__
 - __unstable__
+- __untested__
 
 ## Changes
 View the `changelog` for more info about changes.
@@ -53,8 +54,8 @@ print(r:matches "abazz")
 print(r:matches "abbbzz")
 
 -- group backreference
-local reg = Reg "(ab(123))+\3(000)*\4\5"
-print(reg:matches "ab123000ab123123")
+local r = Reg "(ab(123))+\3(000)*\4\5"
+print(r:matches "ab123000ab123123")
 
 -- how to backreference groups:
 -- \1: refer to (ab(123))+
@@ -64,13 +65,32 @@ print(reg:matches "ab123000ab123123")
 -- \5: refer to (123)
 
 -- unions
-local reg = Reg "(aa|bb)+"
-print(reg:matches "aa")
-print(reg:matches "bb")
-print(reg:matches "bbbb")
-print(reg:matches "bbaabb")
+local r = Reg "(aa|bb)+"
+print(r:matches "aa")
+print(r:matches "bb")
+print(r:matches "bbbb")
+print(r:matches "bbaabb")
+
+-----------------------------------------------------------
+-- REG MODULE
+-----------------------------------------------------------
+local reg = Reg "[0-9]+"
+local input = "123, 456, 1000, 1900"
+
+-- find
+print(reg:find(input))
+
+-- finder
+for s, i in reg:finder(input) do
+   print(s, i)
+end
 
 -- findall
-local reg = Reg "[0-9]+"
-print(reg:findall "123, 456, 1000, 1900")
+local finds = reg:findall(input) 
+finds:eachi(print)
+
+-- split
+local splits = reg:split(input, true)
+splits:eachi(print)
+
 ```
