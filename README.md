@@ -22,6 +22,7 @@ To install the library just `clone` the repo and install [LuaTable](https://gith
 - groups inside groups: `(00(abc)*00)` 
 - group backreference: `(abc)\2(123)\1`
 - unions of expressions: `(A|B|C)`
+- escape reserved characters with `:` 
 
 ## Examples
 ```lua
@@ -71,6 +72,10 @@ print(r:matches "bb")
 print(r:matches "bbbb")
 print(r:matches "bbaabb")
 
+-- escape reserved characters with ':'
+-- reserved characters are: {, }, [, ], (, ), +, *, ?, |, :
+local r = Reg "::(aa|bb|:*:+)+:[abc]"
+print(r:matches ":aa*+bb[abc]")
 -----------------------------------------------------------
 -- REG MODULE
 -----------------------------------------------------------

@@ -43,7 +43,7 @@ local getmetatable = getmetatable
 local err  = "\27[1;31mError: \27[0m"
 local warn = "\27[1;33mWarning: \27[0m"
 local epsilon = Nfa.epsilon
-
+local escape  = ':'
 -------------------------------------------------------------------------------
 -- errors, warnings, assertions
 -------------------------------------------------------------------------------
@@ -342,25 +342,50 @@ end
 -- Tokens definitions
 -------------------------------------------------------------------------------
 local function tk_char(input)
-   if input:len() > 0 then
-      local token = Token(1, 1, char, input:sub(1, 1))
-      token.isSimple = true
+   local len = input:len()
+   local tok = nil
 
-      return token
+   if len == 1 then
+      tok = Token(1, 1, char, input:sub(1, 1))
+      tok.isSimple = true
+
+      return tok
+
+   elseif len >= 2 then
+      local c1 = input:sub(1, 1)
+      local c2 = input:sub(2, 2)
+
+      if c1 == escape then
+         tok = Token(1, 2, char, c2)
+      else
+         tok = Token(1, 1, char, c1)
+      end
+
+      tok.isSimple = true
+
+      return tok
    end
 end
 
 local function tk_char_star(input)
-   local size = input:len()
-   local prev = nil
-   
-   for k = 1, size do
+   local len = input:len()
+   local snd = nil
+   local trd = nil
+
+   for k = 1, len do
       local c = input:sub(k, k)
 
-      if c == '*' and prev then
-         if not reserved[prev] then
+      if c == '*' and snd then
+         -- handle escaped characters
+         if trd == escape then
+            local token = Token(k - 2, k, char_star, input:sub(k - 1, k - 1))
+            token.isSimple = true
+
+            return token
+
+         elseif snd ~= escape and not reserved[snd] then
             k = k - 1
-            
+
             local token = Token(k, k + 1, char_star, input:sub(k, k))
             token.isSimple = true
 
@@ -368,21 +393,31 @@ local function tk_char_star(input)
          end
       end
 
-      prev = c
-   end   
+      -- keep track of 2nd and trd char behind c
+      trd = snd
+      snd = c
+   end
 end
 
 local function tk_char_plus(input)
-   local size = input:len()
-   local prev = nil
-   
-   for k = 1, size do
+   local len = input:len()
+   local snd = nil
+   local trd = nil
+
+   for k = 1, len do
       local c = input:sub(k, k)
 
-      if c == '+' and prev then
-         if not reserved[prev] then
+      if c == '+' and snd then
+         -- handle escaped characters
+         if trd == escape then
+            local token = Token(k - 2, k, char_plus, input:sub(k - 1, k - 1))
+            token.isSimple = true
+
+            return token
+
+         elseif snd ~= escape and not reserved[snd] then
             k = k - 1
-            
+
             local token = Token(k, k + 1, char_plus, input:sub(k, k))
             token.isSimple = true
 
@@ -390,26 +425,35 @@ local function tk_char_plus(input)
          end
       end
 
-      prev = c
-   end   
+      -- keep track of 2nd and trd char behind c
+      trd = snd
+      snd = c
+   end
 end
 
 local function tk_char_opt(input)
    local size = input:len()
-   local prev = prev
+   local snd = nil
+   local trd = nil
    
    for k = 1, size do
       local c = input:sub(k, k)
 
-      if c == '?' and prev then
-         if not reserved[prev] then
+      if c == '?' and snd then
+         -- handle escaped characters
+         if trd == escape then
+            return Token(k - 2, k, char_opt, input:sub(k - 1, k - 1), op_opt)
+
+         elseif snd ~= escape and not reserved[snd] then
             k = k - 1
 
             return Token(k, k + 1, char_opt, input:sub(k, k), op_opt)
          end
       end
 
-      prev = c
+      -- keep track of 2nd and trd char behind c
+      trd = snd
+      snd = c
    end   
 end
 
@@ -444,27 +488,38 @@ local function tk_backref(input)
 end
 
 local function tk_sets(input)
-   local n = input:len()
+   local len  = input:len()
+   local snd  = nil 
+   local trd  = nil
    local i, j = 0, 0
 
-   for k = 1, n do
+   for k = 1, len do
       local c = input:sub(k, k)
 
       if c == '[' and i == 0 then
-         i = k
+         -- handle escaped chars
+         if snd ~= escape or trd == escape then
+            i = k
+         end
+
+      elseif c == ']' then
+         -- handle escaped chars
+         if snd ~= escape or trd == escape then
+            j = k
+            break
+         end
       end
 
-      if c == ']' then
-         j = k
-         break
-      end
+      -- keep track of 2nd and trd char behind c
+      trd = snd
+      snd = c
    end
 
    if i == 0 or j == 0 or i >= j then
       return nil
    end
 
-   --
+   -- determine set type
    local k = j + 1 
    local ends  = input:sub(k, k)
    local token = nil 
@@ -507,6 +562,8 @@ end
 
 local function tk_groups(input)
    local len  = input:len()
+   local snd  = nil 
+   local trd  = nil
    local i, j = 0, 0
    local h = 0
 
@@ -514,28 +571,38 @@ local function tk_groups(input)
       local c = input:sub(k, k)
 
       if c == '(' then
-         h = h + 1
+         -- handle escaped chars
+         if snd ~= escape or trd == escape then
+            h = h + 1
 
-         if i == 0 then
-            i = k
+            if i == 0 then
+               i = k
+            end
          end
 
       elseif c == ')' then
-         h = h - 1
+         -- handle escaped chars
+         if snd ~= escape or trd == escape then
+            h = h - 1
 
-         if h == 0 then
-            -- parenthesis are balanced (we have a valid group)
-            j = k
-            break
+            if h == 0 then
+               -- parenthesis are balanced (group is valid)
+               j = k
+               break
+            end
          end
       end
+
+      -- keep track of 2nd and trd char behind c
+      trd = snd
+      snd = c
    end
 
    if i == 0 or j == 0 or i >= j then
       return nil
    end
 
-   --
+   -- determine group type
    local k = j + 1
    local ends  = input:sub(k, k)
    local token = nil
@@ -807,7 +874,6 @@ end
 local function before_compile()
    -- check for tk_or inside groups
    for i = 1, #group_list do
-      -- TODO: for need optimization (avoid child of group)
       local group  = group_list[i]
       local index  = handle_or(group)
       local size   = #index

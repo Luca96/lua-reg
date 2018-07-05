@@ -3,6 +3,7 @@
 ## (0.03) 28/06/2018:
 - added: Reg.find(), Reg.finder(), Reg.split()
 - improved Reg.split()
+- now reserved characters can be escaped with ':' 
 
 ## (0.02) 17/06/2018:
 - optimized epsilon_closure of nfa, now is about 2x faster
