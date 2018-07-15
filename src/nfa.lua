@@ -44,9 +44,8 @@ local Tunique  = Table.unique
 local TkeyList = Table.keyList
 
 local e = "epsilon"  -- epsilon
-local reject = -1    -- reject state index
 -------------------------------------------------------------------------------
-local Nfa = { epsilon = e, reject = reject }
+local Nfa = { epsilon = e }
 local mt  = { __index = Nfa }
 -------------------------------------------------------------------------------
 -- private functions
@@ -98,7 +97,7 @@ local function computation_of(self, word)
    -- compute the extended transition function of a Nfa
    local len = word:len()
 
-   if len == 0 or current == reject then  
+   if len == 0 then  
       return epsilon_closure(self, { self.current })
    end
    
@@ -109,14 +108,15 @@ local function computation_of(self, word)
    for i = 1, #states do
       local state = states[i]
       local edges = self.edges[state] or {}
-
+      print("cr: "..char, "st: "..state)
       do
          local states = edges[char]
 
          if states then
             new_states:append(unpack(states))
-         else
-            new_states:append(reject)
+
+         elseif self._undef then
+            new_states:append(self._undef(char))
          end
       end
    end
@@ -129,31 +129,21 @@ local function copy_states(edges, m, i)
    local k = 0
 
    for state, _edges in pairs(m.edges) do
-      if state ~= reject then
-         k = state + i
-         edges[k] = {}
+      k = state + i
+      edges[k] = {}
 
-         for char, states in pairs(_edges) do
-            states = Tclone(states):map(function(a) return a + i end)
-            edges[k][char] = states
-         end
+      for char, states in pairs(_edges) do
+         states = Tclone(states):map(function(a) return a + i end)
+         edges[k][char] = states
       end
    end
 
    return k
 end
 
-local function copy_reject(edges, m)
-   -- copy the reject state of m to edges
-   edges[reject] = Tclone(m.edges[reject])
-end
-
 local function copy_accepting(accepting, m, i)
    -- copy accepting states into accepting with offset i
    for state in m.accepting:iter() do
-      if state == reject then
-         accepting:append(reject)
-      else
          accepting:append(state + i)
       end
    end 
@@ -173,27 +163,6 @@ local function add_edge(edges, state, char, states)
       -- add states to edges[state][char]
       edges_state[char] = Table(edges_state[char]):append(unpack(states)):unique()
    end
-end
-
-local function merge_reject(m1, m2)
-   -- return a new reject state which is the merge between reject of m1 and m2
-   local m1_reject = m1.edges[reject]
-   local m2_reject = m2.edges[reject]
-
-   local state = Tclone(m1_reject)
-
-   for char, states in pairs(m2_reject) do
-      local state_char = state[char]
-
-      if state_char == nil then
-         state[char] = { [char] = states }
-
-      else
-         state[char] = Tunique(Tappend(state_char, unpack(states)))
-      end
-   end
-
-   return state
 end
 
 local function count_states(m)
@@ -224,15 +193,8 @@ end
 function Nfa:compute(word)
    local states = computation_of(self, word)
    local finals = self.accepting
-   
-   local size  = #states
-   local index = states:find(reject)
 
-   if index ~= nil and size > 1 then
-      remove(states, index)
-   end
-
-   for i = 1, size do
+   for i = 1, #states do
       if finals:has(states[i]) then
          return true, word
       end
@@ -254,13 +216,8 @@ function Nfa.new(params)
    self.current = params.start or 1
    self.accepting = Table(params.accepting)
 
-   -- reject state
-   self.edges[reject] = self.edges[reject] or {}
-
    -- info
    self.dead = false  -- true: when reached the dead state
-   -- self.i = 0         -- start-index of the accepted word
-   -- self.j = 0         -- end-index of the accepted word
    self.numStates = params.states or count_states(self) or 0
 
    return self
@@ -292,27 +249,32 @@ function Nfa:copy()
    copy_states(edges, self, 0)
    copy_accepting(accepting, self, 0)
 
-   -- reject state
-   copy_reject(edges, self)
-
    return Nfa.new { edges = edges, accepting = accepting, states = self.numStates }
 end
 -------------------------------------------------------------------------------
 -- UNION, CONCATENATION, STAR
 -------------------------------------------------------------------------------
 -- TODO: don't work
-function Nfa.negation(m)
+function Nfa.negation(m, chars)
 -- creates a new nfa that recognize everything except L(m)
    local edges = Table()
+   local final = m.numStates + 1
 
    copy_states(edges, m, 0)
-   copy_reject(edges, m)
+   
 
-   local nfa = Nfa.new { 
-      edges  = edges, 
-      states = m.numStates, 
-      accepting = Table(reject)
-   }
+   -- throw undefined transitions in an accepting state
+   nfa._undef = function(c)
+      print("c: " ..c)
+      return final
+   end   
+
+   local nfa = Nfa { edges = edges, accepting = Table(final), states = m.numStates + 2 }
+
+   print("\n\nedges")
+   print(nfa.edges)
+   print("\naccepting")
+   print(nfa.accepting)
 
    return nfa
 end
@@ -329,9 +291,6 @@ function Nfa.union(m1, m2)
    copy_states(edges, m1, 1)
    copy_states(edges, m2, k)
 
-   -- reject state
-   edges[reject] = merge_reject(m1, m2)
-
    -- new start state (that connects start state of m1 and m2)
    edges[1] = { [e] = { 2, k + 1 } }
 
@@ -340,7 +299,7 @@ function Nfa.union(m1, m2)
    copy_accepting(accepting, m1, 1)
    copy_accepting(accepting, m2, k)
 
-   return Nfa.new { edges = edges, accepting = accepting, states = k + m2.numStates }
+   return Nfa { edges = edges, accepting = accepting, states = k + m2.numStates }
 end
 
 function Nfa.concat(m1, m2)
@@ -354,9 +313,6 @@ function Nfa.concat(m1, m2)
    copy_states(edges, m1, 0)
    copy_states(edges, m2, k)
 
-   -- reject state
-   edges[reject] = merge_reject(m1, m2)
-
    local accepting = Table()
    copy_accepting(accepting, m2, k)
 
@@ -367,7 +323,7 @@ function Nfa.concat(m1, m2)
       add_edge(edges, state, e, initial)
    end)
 
-   return Nfa.new { edges = edges, accepting = accepting, states = k + m2.numStates }
+   return Nfa { edges = edges, accepting = accepting, states = k + m2.numStates }
 end
 
 function Nfa.star(m)
@@ -380,9 +336,6 @@ function Nfa.star(m)
    local accepting = Table()
    copy_accepting(accepting, m, 1)
 
-   -- reject state
-   copy_reject(edges, m)
-
    -- new start state
    edges[1] = { [e] = start }
 
@@ -394,7 +347,7 @@ function Nfa.star(m)
    -- add start state to accepting state (to accept epsilon)
    accepting[#accepting + 1] = 1
 
-   return Nfa.new { edges = edges, accepting = accepting, states = m.numStates + 1 }
+   return Nfa { edges = edges, accepting = accepting, states = m.numStates + 1 }
 end
 
 function Nfa:plus()
@@ -483,5 +436,5 @@ end
 mt.__add    = Nfa.union
 mt.__concat = Nfa.concat
 -------------------------------------------------------------------------------
-return Nfa
+return setmetatable(Nfa, { __call = function(t, ...) return Nfa.new(...) end })
 -------------------------------------------------------------------------------
