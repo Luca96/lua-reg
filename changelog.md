@@ -1,5 +1,10 @@
 # Lua-Reg Changelog
 
+## (0.04) 17/07/2018:
+- updated code due to luatable update
+- added set-complement feature
+- various fix in nfa class
+
 ## (0.03) 28/06/2018:
 - added: Reg.find(), Reg.finder(), Reg.split()
 - improved Reg.split()

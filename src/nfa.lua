@@ -25,24 +25,25 @@ SOFTWARE.
 -------------------------------------------------------------------------------
 -- Nfa: Non-deterministic Finite Acceptors
 -------------------------------------------------------------------------------
-local Table = require "luatable"
+local table = require "luatable"
 -------------------------------------------------------------------------------
 local setmetatable = setmetatable 
 local unpack = unpack 
 local insert = table.insert 
 local remove = table.remove 
 local pairs  = pairs 
-local iter   = Table.iter
+local iter   = table.iter
 local ipairs = ipairs 
 local type   = type 
 local max    = math.max 
 
-local Teachi   = Table.eachi
-local Tclone   = Table.clone
-local Tappend  = Table.append
-local Tunique  = Table.unique
-local TkeyList = Table.keyList
+local tb_eachi  = table.eachi
+local tb_clone  = table.clone
+local tb_append = table.append
+local tb_unique = table.unique
+local tb_klist  = table.keyList
 
+local void = function() end
 local e = "epsilon"  -- epsilon
 -------------------------------------------------------------------------------
 local Nfa = { epsilon = e }
@@ -52,15 +53,15 @@ local mt  = { __index = Nfa }
 -------------------------------------------------------------------------------
 local function epsilon_closure(self, states)
    -- compute the epsilon closure of a set of states
-   local fifo = Table(states)
+   local fifo = table(states)
    local size = #states
 
    if size == 0 then
-      return Table()
+      return table()
    end
 
    local visited = {}
-   local closure = Table()
+   local closure = table()
    local edges = self.edges
    local n = #fifo
    local k = 1
@@ -103,20 +104,21 @@ local function computation_of(self, word)
    
    local char = word:sub(len, len)
    local states = computation_of(self, word:sub(1, len - 1))
-   local new_states = Table()
+   local new_states = table()
    
    for i = 1, #states do
       local state = states[i]
       local edges = self.edges[state] or {}
-      print("cr: "..char, "st: "..state)
+
       do
          local states = edges[char]
 
          if states then
             new_states:append(unpack(states))
-
-         elseif self._undef then
-            new_states:append(self._undef(char))
+         
+         elseif edges.undeft then
+            -- handle undefined-transitions on state
+            new_states:append(edges.undeft(state, char))
          end
       end
    end
@@ -128,13 +130,17 @@ local function copy_states(edges, m, i)
    -- copy the states of m into the edges with offset i
    local k = 0
 
-   for state, _edges in pairs(m.edges) do
+   -- for state, _edges in pairs(m.edges) do
+   for state, _edges in ipairs(m.edges) do
       k = state + i
-      edges[k] = {}
+      edges[k] = { undeft = _edges.undeft }
 
       for char, states in pairs(_edges) do
-         states = Tclone(states):map(function(a) return a + i end)
-         edges[k][char] = states
+         -- do not consider undeft
+         if type(states) ~= "function" then 
+            states = tb_clone(states):map(table.sum, i)
+            edges[k][char] = states
+         end
       end
    end
 
@@ -144,8 +150,7 @@ end
 local function copy_accepting(accepting, m, i)
    -- copy accepting states into accepting with offset i
    for state in m.accepting:iter() do
-         accepting:append(state + i)
-      end
+      accepting:append(state + i)
    end 
 end
 
@@ -161,7 +166,7 @@ local function add_edge(edges, state, char, states)
 
    else
       -- add states to edges[state][char]
-      edges_state[char] = Table(edges_state[char]):append(unpack(states)):unique()
+      edges_state[char] = table(edges_state[char]):append(unpack(states)):unique()
    end
 end
 
@@ -206,18 +211,17 @@ end
 -- NEW
 -------------------------------------------------------------------------------
 function Nfa.new(params)
-   --
+-- creates a non-deterministic finite acceptor
    params = params or {}
    
    local self = setmetatable({}, mt)
 
    -- structure
-   self.edges = Table(params.edges)
+   self.edges = table(params.edges)
    self.current = params.start or 1
-   self.accepting = Table(params.accepting)
+   self.accepting = table(params.accepting)
 
    -- info
-   self.dead = false  -- true: when reached the dead state
    self.numStates = params.states or count_states(self) or 0
 
    return self
@@ -232,7 +236,7 @@ end
 
 function Nfa:acceptingStates(states)
 -- change the accepting states of the current nfa 
-   self.accepting = Table(states)
+   self.accepting = table(states)
    return self
 end
 
@@ -243,49 +247,50 @@ end
 
 function Nfa:copy()
 -- return a new nfa that is the exact copy of the current nfa
-   local edges = Table()
-   local accepting = Table()
+   local edges = table()
+   local accepting = table()
 
    copy_states(edges, self, 0)
    copy_accepting(accepting, self, 0)
 
-   return Nfa.new { edges = edges, accepting = accepting, states = self.numStates }
+   return Nfa { edges = edges, accepting = accepting, states = self.numStates }
 end
 -------------------------------------------------------------------------------
--- UNION, CONCATENATION, STAR
+-- UNION, CONCATENATION, STAR,...
 -------------------------------------------------------------------------------
--- TODO: don't work
-function Nfa.negation(m, chars)
--- creates a new nfa that recognize everything except L(m)
-   local edges = Table()
+function Nfa.negateUnion(m, chars)
+-- creates a new nfa that recognize everything except L(m) (works for unions)
+   local edges = tb_clone(m.edges)
    local final = m.numStates + 1
+   local len = chars:len()
 
-   copy_states(edges, m, 0)
-   
+   -- handle undefined-transitions (skip first state)
+   for i = 2, #edges do
+      edges[i].undeft = function(state, char)
+         -- check that char in not inside chars
+         for i = 1, len do
+            if char == chars:sub(i, i) then
+               return
+            end
+         end
+                  
+         return state + (final - i)
+      end
+   end
 
-   -- throw undefined transitions in an accepting state
-   nfa._undef = function(c)
-      print("c: " ..c)
-      return final
-   end   
-
-   local nfa = Nfa { edges = edges, accepting = Table(final), states = m.numStates + 2 }
-
-   print("\n\nedges")
-   print(nfa.edges)
-   print("\naccepting")
-   print(nfa.accepting)
-
-   return nfa
+   return Nfa {
+      states = m.numStates + 1,
+      edges  = edges,
+      accepting = { final }
+   }
 end
 
--- TODO: testing
 function Nfa.union(m1, m2)
 -- creates a new nfa that recognize L(m1 U m2)
    if m2:isEmpty() then return m1 end
    if m1:isEmpty() then return m2 end
 
-   local edges = Table()
+   local edges = table()
    local k = m1.numStates + 1
 
    copy_states(edges, m1, 1)
@@ -295,7 +300,7 @@ function Nfa.union(m1, m2)
    edges[1] = { [e] = { 2, k + 1 } }
 
    -- accepting states as union of accepting states of m1 and m2
-   local accepting = Table()
+   local accepting = table()
    copy_accepting(accepting, m1, 1)
    copy_accepting(accepting, m2, k)
 
@@ -307,13 +312,13 @@ function Nfa.concat(m1, m2)
    if m2:isEmpty() then return m1 end
    if m1:isEmpty() then return m2 end
 
-   local edges = Table()
+   local edges = table()
    local k = m1.numStates
 
    copy_states(edges, m1, 0)
    copy_states(edges, m2, k)
 
-   local accepting = Table()
+   local accepting = table()
    copy_accepting(accepting, m2, k)
 
    -- connect with epsilon-transition final states of m1 to start state of m2
@@ -328,12 +333,12 @@ end
 
 function Nfa.star(m)
 -- creates a new nfa recognize L(m)*
-   local edges = Table()
+   local edges = table()
    local start = { 2 }
 
    copy_states(edges, m, 1)
 
-   local accepting = Table()
+   local accepting = table()
    copy_accepting(accepting, m, 1)
 
    -- new start state
@@ -350,33 +355,42 @@ function Nfa.star(m)
    return Nfa { edges = edges, accepting = accepting, states = m.numStates + 1 }
 end
 
-function Nfa:plus()
--- make the current nfa recognize L(m)+
-   local edges = self.edges
+function Nfa.plus(m)
+-- creates an nfa that recognize L(m)+
+   local edges = tb_clone(m.edges)
    local start = { 1 }
-   local accepting = self.accepting
+   local accepting = tb_clone(m.accepting)
 
    -- connect accepting states with start state
    accepting:eachi(function(state)
       add_edge(edges, state, e, start)
-   end)
+   end)   
 
-   return self
+   return Nfa {
+      states = m.numStates,
+      edges  = edges,
+      accepting = accepting 
+   }
 end
 
-function Nfa:optional()
--- make the current nfa recognize L(m)? (0 or 1)
-   local edges = self.edges
-   local start = edges[1]
+function Nfa.optional(m)
+-- creates an nfa that recognize L(m)? (0 or 1)
+   local edges = tb_clone(m.edges)
+   local accepting = tb_clone(m.accepting)
 
    -- connect start state to accepting states
-   self.accepting:eachi(function(state)
+   accepting:eachi(function(state)
       add_edge(edges, 1, e, { state })
-   end)
+   end)   
 
-   return self  
+   return Nfa {
+      states = m.numStates,
+      edges  = edges,
+      accepting = accepting
+   }
 end
 
+-- TODO: make times build a new nfa
 function Nfa:times(x, y)
 -- make the current nfa recognize L(m){x, y}
    if x == nil and y == nil then
@@ -404,7 +418,7 @@ function Nfa:times(x, y)
    else
       local m = self
       local z = y - x
-      local a = Table()
+      local a = table()
 
       --
       for i = 1, x - 1 do

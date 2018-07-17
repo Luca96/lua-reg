@@ -1,4 +1,4 @@
-# Lua-Reg 0.03
+# Lua-Reg 0.04
 A Regular Expression Engine for Lua. 
 
 ## Warning!
@@ -16,7 +16,8 @@ To install the library just `clone` the repo and install [LuaTable](https://gith
 
 ## Working features:
 - quantifiers: `*, +, ?, {n}, {n, m}, {,n}, {n,}` 
-- sets: `[abc]`
+- sets: `[abc], [abc]+, [abc]*, [abc]?`
+- set complement: `[^abc]`
 - ranges: `[0-9], [a-zA-Z]`
 - groups: `(abc[0-9]abc)`
 - groups inside groups: `(00(abc)*00)` 

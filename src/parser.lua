@@ -23,7 +23,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 --]]
 -------------------------------------------------------------------------------
-local Table = require "luatable"
+local table = require "luatable"
 local Nfa   = require "nfa"
 -------------------------------------------------------------------------------
 local type   = type 
@@ -98,8 +98,8 @@ function Token.new(i, j, t, v, o)
       ends      = j,
       type      = t,
       value     = v,
-      childs    = Table(),
-      forbidden = Table(),  -- not allowed childs's type
+      childs    = table(),
+      forbidden = table(),  -- not allowed childs's type
       operation = o or '',
    }
 
@@ -117,8 +117,8 @@ Token = setmetatable(Token,
    { __call = function(self, ...) return Token.new(...) end })
 
 -- for group backreference and union
-local group_list = Table()
-local back_list  = Table()
+local group_list = table()
+local back_list  = table()
 -------------------------------------------------------------------------------
 -- Token type constants 
 -------------------------------------------------------------------------------
@@ -129,7 +129,7 @@ local char_opt  = "char_optional"
 local set       = "set"
 local set_star  = "set_star"
 local set_plus  = "set_plus"
-local set_comp  = "set_comp"
+local set_comp  = "set_complement"
 local set_opt   = "set_optional"
 local set_times = "set_times"
 local group     = "group"
@@ -146,13 +146,13 @@ local op_concat = "op_concat"
 local op_union  = "op_union"
 local op_star   = "op_star"
 local op_plus   = "op_plus"
-local op_comp   = "op_comp"
+local op_comp   = "op_complement"
 local op_opt    = "op_optional"
 local op_times  = "op_times" 
 -------------------------------------------------------------------------------
 -- token forbidden types
 -------------------------------------------------------------------------------
-local forb_set = Table {
+local forb_set = table {
    char_star, 
    char_plus, 
    char_opt , 
@@ -165,7 +165,7 @@ local forb_set = Table {
 -------------------------------------------------------------------------------
 -- Ranges:
 -------------------------------------------------------------------------------
-local range_intervals = Table (
+local range_intervals = table (
    48,  57 ,  --0-9
    65,  90 ,  --A-Z
    97,  122   --a-z
@@ -176,7 +176,7 @@ local function find_ranges(input)
    local k = 1
    local i = 0
    local n = input:len()
-   local ranges = Table()
+   local ranges = table()
 
    while k < n do
       if input:sub(k, k) == '-' then
@@ -367,6 +367,7 @@ local function tk_char(input)
    end
 end
 
+-- TODO: char_start, plus and opt tokens can be unified in one definition
 local function tk_char_star(input)
    local len = input:len()
    local snd = nil
@@ -524,18 +525,22 @@ local function tk_sets(input)
    local ends  = input:sub(k, k)
    local token = nil 
 
+   -- set star:
    if ends == '*' then
       token = Token(i, k, set_star, input:sub(i, j), op_star)
       token.forbidden = forb_set 
 
+   -- set plus:
    elseif ends == "+" then
       token = Token(i, k, set_plus, input:sub(i, j), op_plus)
       token.forbidden = forb_set
 
+   -- set opt:
    elseif ends == "?" then
       token = Token(i, k, set_opt, input:sub(i, j), op_opt)
       token.forbidden = forb_set
 
+   -- set times:
    elseif ends == "{" then 
       token = Token(i, j, set, nil)
       local n, m, d = handle_times(input, k + 1)
@@ -552,6 +557,12 @@ local function tk_sets(input)
          token.isSimple = true
       end
 
+   -- set complement:
+   elseif input:sub(i + 1, i + 1) == '^' then
+      token = Token(i, j, set_comp, '[' .. input:sub(i + 2, j), op_comp)
+      token.forbidden = forb_set
+
+   -- set:
    else
       token = Token(i, j, set, handle_ranges(input:sub(i + 1, j - 1)))
       token.isSimple = true
@@ -607,15 +618,19 @@ local function tk_groups(input)
    local ends  = input:sub(k, k)
    local token = nil
 
+   -- group star:
    if ends == '*' then
       token = Token(i, k, grp_star, input:sub(i, j), op_star) 
 
+   -- group plus:
    elseif ends == '+' then
       token = Token(i, k, grp_plus, input:sub(i, j), op_plus)
 
+   -- group opt:
    elseif ends == '?' then
       token = Token(i, k, grp_opt, input:sub(i, j), op_opt)
 
+   -- group times:
    elseif ends == "{" then
       token = Token(i, j, group, nil, op_concat)
       local n, m, d = handle_times(input, k + 1)
@@ -631,6 +646,7 @@ local function tk_groups(input)
          token.value = input:sub(i + 1, j - 1)
       end
 
+   -- group:
    else
       token = Token(i, j, group, input:sub(i + 1, j - 1), op_concat)
    end
@@ -683,7 +699,7 @@ local Tokens = {
 -- tokenizer
 -------------------------------------------------------------------------------
 local function tokenize(input, forbidden)
-   local list = Table()
+   local list = table()
    local len  = input:len() 
    local tok  = nil
 
@@ -708,7 +724,7 @@ local function tokenize(input, forbidden)
       local after  = tokenize(input:sub(j, len), forbidden)
 
       if before then
-         list:push(unpack(before:reverse()))
+         list:push(unpack(before))
       end
 
       if after then
@@ -724,7 +740,7 @@ end
 local function nfa_char(char)
    -- build an nfa that recognize a single character
 
-   return Nfa.new {
+   return Nfa {
       states = 2,
       edges  = {
          [1] = { [char] = { 2 } },
@@ -737,7 +753,7 @@ end
 local function nfa_char_star(char)
    -- build an nfa that recognize char*
 
-   return Nfa.new {
+   return Nfa {
       states = 1,
       edges  = { 
          [1] = { [char] = { 1 } }
@@ -750,7 +766,7 @@ end
 local function nfa_char_plus(char)
    -- build an nfa that recognize char+
 
-   return Nfa.new {
+   return Nfa {
       states = 2,
       edges  = { 
          [1] = { [char] = { 2 } },
@@ -762,24 +778,20 @@ end
 
 local function nfa_set(chars)
    -- build an nfa that recognize c1 U c2 U ... U cn
-   local len = chars:len()
+   local len   = chars:len()
+   local edges = { [1] = { [epsilon] = table.init(len, table.increase) } }
+   local final = len + 2
    
-   local nfa = Nfa.new {
-      states = 1 + len + len, 
-      edges  = {
-         [1] = { [epsilon] = Table.new(len, Table.increase) }
-      },
-      accepting = Table.new(len, function(a) return a + len + 1 end)
-   }
-
    for i = 1, len do
       local c = chars:sub(i, i)
-      local state = i + 1
-
-      nfa:addEdge(state, c, { state + len })
+      edges[i + 1] = { [c] = { final } }
    end
 
-   return nfa
+   return Nfa {
+      states = len + 2,
+      edges  = edges,
+      accepting = { final } 
+   }
 end
 -------------------------------------------------------------------------------
 -- Parser
@@ -794,12 +806,12 @@ end
 
 function Parser:parse()
 -- build the parse tree (needed by Parse.compile)
-   local tree = Table()
-   local fifo = tokenize(self.input, Table())
+   local tree = table()
+   local fifo = tokenize(self.input, table())
 
    tree:append(unpack(fifo))
 
-   while fifo:notEmpty() do
+   while not fifo:empty() do
       local token = fifo:head()
       local ttype = token.type
       
@@ -821,7 +833,7 @@ local function compile_aux(token, operation)
    local tktype = token.type
    local tvalue = token.value
 
-   if childs:notEmpty() then
+   if not childs:empty() then
       local m1 = Nfa.new()
 
       childs:eachi(function(tok)
@@ -844,7 +856,7 @@ local function compile_aux(token, operation)
             m1 = m1 + m2
 
          elseif op_comp == operation then
-            m1 = m2:negation()
+            m1 = m2:negateUnion(token.value)
          
          elseif op_times == operation then
             m1 = m2:times(token.min, token.max)
@@ -883,7 +895,7 @@ local function before_compile()
          -- group contains unions, so:
          group.operation = op_union
 
-         local root = Table()
+         local root = table()
          local c = 1
 
          size = size + 1
@@ -891,7 +903,7 @@ local function before_compile()
 
          -- rebuilt group.childs by adding tokens between '|'
          for k = 1, size do
-            local t = Table()
+            local t = table()
             local j = index[k] - 1
 
             -- token info

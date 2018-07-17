@@ -26,7 +26,7 @@ SOFTWARE.
 --]]
 -------------------------------------------------------------------------------
 local Parser = require "parser"
-local Table  = require "luatable"
+local table  = require "luatable"
 -------------------------------------------------------------------------------
 local setmetatable = setmetatable 
 local assert = assert 
@@ -43,7 +43,7 @@ local type   = type
 -- CLASS
 -------------------------------------------------------------------------------
 local Reg = {
-    __VERSION = "0.03",
+    __VERSION = "0.04",
     __INFO    = "Regular Expression Engine for Lua",
     __AUTHOR  = "Luca Anzalone",
 }
@@ -125,7 +125,7 @@ end
 
 function Reg:findall(str)
 -- returns a list of substring that matches the regex
-   local list  = Table()
+   local list  = table()
    local len   = str:len()
    local j     = 1
    local match = false
@@ -177,7 +177,7 @@ end
 
 function Reg:split(str, remove_empty)
 -- returns a list of string obtained by splitting the input string
-   local list = Table()
+   local list = table()
    local size = 0
    local s, i = self:find(str) 
 
