@@ -40,6 +40,7 @@ local max    = math.max
 local tb_eachi  = table.eachi
 local tb_clone  = table.clone
 local tb_append = table.append
+local tb_insert = table.insert
 local tb_unique = table.unique
 local tb_klist  = table.keyList
 
@@ -129,15 +130,17 @@ end
 local function copy_states(edges, m, i)
    -- copy the states of m into the edges with offset i
    local k = 0
+   local m_edges = m.edges
 
-   -- for state, _edges in pairs(m.edges) do
-   for state, _edges in ipairs(m.edges) do
+   for state = 1, table.maxn(m_edges) do
+      local edge = m_edges[state] or {}
+      
       k = state + i
-      edges[k] = { undeft = _edges.undeft }
+      edges[k] = { undeft = edge.undeft }
 
-      for char, states in pairs(_edges) do
+      for char, states in pairs(edge) do
          -- do not consider undeft
-         if type(states) ~= "function" then 
+         if char ~= "undeft" then
             states = tb_clone(states):map(table.sum, i)
             edges[k][char] = states
          end
@@ -163,9 +166,8 @@ local function add_edge(edges, state, char, states)
 
    elseif edges_state[char] == nil then
       edges_state[char] = states
-
    else
-      -- add states to edges[state][char]
+      -- add states to edges[state][char] (edge already exist)
       edges_state[char] = table(edges_state[char]):append(unpack(states)):unique()
    end
 end
@@ -180,8 +182,10 @@ local function count_states(m)
       local edge = edges[i] or {}
 
       for _, states in pairs(edge) do
-         for j = 1, #states do
-            count = max(count, states[j])
+         if type(states) == "table" then
+            for j = 1, #states do
+               count = max(count, states[j])
+            end
          end
       end
    end
@@ -258,33 +262,6 @@ end
 -------------------------------------------------------------------------------
 -- UNION, CONCATENATION, STAR,...
 -------------------------------------------------------------------------------
-function Nfa.negateUnion(m, chars)
--- creates a new nfa that recognize everything except L(m) (works for unions)
-   local edges = tb_clone(m.edges)
-   local final = m.numStates + 1
-   local len = chars:len()
-
-   -- handle undefined-transitions (skip first state)
-   for i = 2, #edges do
-      edges[i].undeft = function(state, char)
-         -- check that char in not inside chars
-         for i = 1, len do
-            if char == chars:sub(i, i) then
-               return
-            end
-         end
-                  
-         return state + (final - i)
-      end
-   end
-
-   return Nfa {
-      states = m.numStates + 1,
-      edges  = edges,
-      accepting = { final }
-   }
-end
-
 function Nfa.union(m1, m2)
 -- creates a new nfa that recognize L(m1 U m2)
    if m2:isEmpty() then return m1 end
@@ -292,7 +269,7 @@ function Nfa.union(m1, m2)
 
    local edges = table()
    local k = m1.numStates + 1
-
+   
    copy_states(edges, m1, 1)
    copy_states(edges, m2, k)
 
@@ -314,7 +291,7 @@ function Nfa.concat(m1, m2)
 
    local edges = table()
    local k = m1.numStates
-
+   
    copy_states(edges, m1, 0)
    copy_states(edges, m2, k)
 
@@ -335,7 +312,7 @@ function Nfa.star(m)
 -- creates a new nfa recognize L(m)*
    local edges = table()
    local start = { 2 }
-
+   
    copy_states(edges, m, 1)
 
    local accepting = table()
@@ -360,7 +337,7 @@ function Nfa.plus(m)
    local edges = tb_clone(m.edges)
    local start = { 1 }
    local accepting = tb_clone(m.accepting)
-
+   
    -- connect accepting states with start state
    accepting:eachi(function(state)
       add_edge(edges, state, e, start)
