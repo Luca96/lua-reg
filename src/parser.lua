@@ -367,8 +367,7 @@ local function tk_char(input)
    end
 end
 
--- TODO: char_start, plus and opt tokens can be unified in one definition
-local function tk_char_star(input)
+local function tk_chars(input)
    local len = input:len()
    local snd = nil
    local trd = nil
@@ -376,21 +375,42 @@ local function tk_char_star(input)
    for k = 1, len do
       local c = input:sub(k, k)
 
-      if c == '*' and snd then
+      if (c == '*' or c == '+' or c == '?') and snd then
          -- handle escaped characters
          if trd == escape then
-            local token = Token(k - 2, k, char_star, input:sub(k - 1, k - 1))
-            token.isSimple = true
+            local tk_value = input:sub(k - 1, k - 1)
 
-            return token
+            -- determine token type
+            if c == '*' then
+               local token = Token(k - 2, k, char_star, tk_value)
+               token.isSimple = true
+               return token
+
+            elseif c == '+' then
+               local token = Token(k - 2, k, char_plus, tk_value)
+               token.isSimple = true
+               return token
+            else
+               return Token(k - 2, k, char_opt, tk_value, op_opt)
+            end
 
          elseif snd ~= escape and not reserved[snd] then
             k = k - 1
+            local tk_value = input:sub(k, k)
 
-            local token = Token(k, k + 1, char_star, input:sub(k, k))
-            token.isSimple = true
+            -- determine token type
+            if c == '*' then
+               local token = Token(k, k + 1, char_star, tk_value)
+               token.isSimple = true
+               return token
 
-            return token
+            elseif c == '+' then
+               local token = Token(k, k + 1, char_plus, tk_value)
+               token.isSimple = true
+               return token
+            else
+               return Token(k, k + 1, char_opt, tk_value, op_opt)
+            end
          end
       end
 
@@ -398,64 +418,6 @@ local function tk_char_star(input)
       trd = snd
       snd = c
    end
-end
-
-local function tk_char_plus(input)
-   local len = input:len()
-   local snd = nil
-   local trd = nil
-
-   for k = 1, len do
-      local c = input:sub(k, k)
-
-      if c == '+' and snd then
-         -- handle escaped characters
-         if trd == escape then
-            local token = Token(k - 2, k, char_plus, input:sub(k - 1, k - 1))
-            token.isSimple = true
-
-            return token
-
-         elseif snd ~= escape and not reserved[snd] then
-            k = k - 1
-
-            local token = Token(k, k + 1, char_plus, input:sub(k, k))
-            token.isSimple = true
-
-            return token
-         end
-      end
-
-      -- keep track of 2nd and trd char behind c
-      trd = snd
-      snd = c
-   end
-end
-
-local function tk_char_opt(input)
-   local size = input:len()
-   local snd = nil
-   local trd = nil
-   
-   for k = 1, size do
-      local c = input:sub(k, k)
-
-      if c == '?' and snd then
-         -- handle escaped characters
-         if trd == escape then
-            return Token(k - 2, k, char_opt, input:sub(k - 1, k - 1), op_opt)
-
-         elseif snd ~= escape and not reserved[snd] then
-            k = k - 1
-
-            return Token(k, k + 1, char_opt, input:sub(k, k), op_opt)
-         end
-      end
-
-      -- keep track of 2nd and trd char behind c
-      trd = snd
-      snd = c
-   end   
 end
 
 local function tk_backref(input)
@@ -689,9 +651,7 @@ local Tokens = {
    tk_groups,
    tk_sets,
    tk_or,
-   tk_char_star,
-   tk_char_plus,
-   tk_char_opt,
+   tk_chars,
    tk_backref,
    tk_char,
 }
@@ -827,7 +787,7 @@ function Parser:parse()
 end
 
 local function compile_aux(token, operation)
-   -- print(token, operation)
+   print(token, operation)
 
    local childs = token.childs
    local tktype = token.type
