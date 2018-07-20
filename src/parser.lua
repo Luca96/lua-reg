@@ -521,8 +521,9 @@ local function tk_sets(input)
 
    -- set complement:
    elseif input:sub(i + 1, i + 1) == '^' then
-      token = Token(i, j, set_comp, '[' .. input:sub(i + 2, j), op_comp)
-      token.forbidden = forb_set
+      token = Token(i, j, set, handle_ranges(input:sub(i + 2, j - 1)))
+      token.negate = true
+      token.isSimple = true 
 
    -- set:
    else
@@ -736,21 +737,46 @@ local function nfa_char_plus(char)
    }
 end
 
-local function nfa_set(chars)
+local function nfa_set(chars, complement)
    -- build an nfa that recognize c1 U c2 U ... U cn
    local len   = chars:len()
    local edges = { [1] = { [epsilon] = table.init(len, table.increase) } }
-   local final = len + 2
-   
-   for i = 1, len do
-      local c = chars:sub(i, i)
-      edges[i + 1] = { [c] = { final } }
+   local count = len + 2
+   local final = { count }
+      
+   if complement then
+      -- handle set-complement
+      count = count + 1
+
+      for i = 1, len do
+         local c = chars:sub(i, i)
+         
+         edges[i + 1] = { 
+            [c] = { count },
+            undeft = function(state, char)
+               -- check that char in not inside chars
+               for i = 1, len do
+                  if char == chars:sub(i, i) then
+                     return
+                  end
+               end
+
+               return state + count - i
+            end
+         }
+      end 
+   else
+      -- set without complement
+      for i = 1, len do
+         local c = chars:sub(i, i)
+         edges[i + 1] = { [c] = final }
+      end
    end
 
    return Nfa {
-      states = len + 2,
+      states = count,
       edges  = edges,
-      accepting = { final } 
+      accepting = final, 
    }
 end
 -------------------------------------------------------------------------------
@@ -787,7 +813,7 @@ function Parser:parse()
 end
 
 local function compile_aux(token, operation)
-   print(token, operation)
+   -- print(token, operation)
 
    local childs = token.childs
    local tktype = token.type
@@ -815,9 +841,6 @@ local function compile_aux(token, operation)
          elseif op_union == operation then
             m1 = m1 + m2
 
-         elseif op_comp == operation then
-            m1 = m2:negateUnion(token.value)
-         
          elseif op_times == operation then
             m1 = m2:times(token.min, token.max)
          end
@@ -837,7 +860,8 @@ local function compile_aux(token, operation)
       nfa = nfa_char_plus(tvalue)
 
    elseif tktype == set then
-      nfa = nfa_set(tvalue)
+      -- consider set-complement
+      nfa = nfa_set(tvalue, token.negate)
    end
 
    return nfa

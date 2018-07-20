@@ -4,6 +4,7 @@
 - updated code due to luatable update
 - added set-complement feature
 - various fix in nfa class
+- token rules for char now are unified into tk_chars
 
 ## (0.03) 28/06/2018:
 - added: Reg.find(), Reg.finder(), Reg.split()
