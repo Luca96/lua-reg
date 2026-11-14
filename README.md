@@ -112,28 +112,87 @@ splits:eachi(print)
 
 ```
 
+## Limitations
+- **Backreferences repeat the group's pattern, not the text it matched.** `([ab])\1` matches `ab`
+  as well as `aa`. Only `\1` to `\5` exist. Groups are numbered outermost first, then left to right.
+- **Ranges must stay inside one class:** `0-9`, `A-Z` or `a-z`. `[!-/]` is an error, so list such
+  characters one by one.
+- **`find` never reports an empty match.** `Reg"a*":find"bbb"` returns `"", 0`.
+- Matching is byte-based: a multi-byte UTF-8 character counts as several characters.
+
 ## Known issues & roadmap
 This section tracks what is still open. Update it when an item is fixed or a new one is found.
-Each known issue has a `#knownbug` test in `spec/`.
+Each known issue has an ID, and a `#knownbug` test in `spec/` whose name contains that ID
+(`busted --filter="P0%-2"` runs one; the filter is a Lua pattern, so escape the `-`). Remove an entry, and the tag from its test, when you fix it.
 
-### Known issues
-- **`find` can skip earlier matches.** When a match ends the string, `find` returns it instead of
-  an earlier one (`Reg"[0-9]+":find"a1b2"` gives `"2", 4`). Because of this, `findall` returns
-  matches out of order (`"a1b22c333"` → `333, 1, 22`) and `split` misses split points
-  (`"123, 456, 1000, 1900"` → `", 456, 1000,"`).
-- **`find`/`findall` miss one-character inputs.** `Reg"[0-9]+":find"7"` returns `"", 0`.
-- **`finder` never advances.** After the first match it keeps returning the same one, so a
-  `for ... in reg:finder(s)` loop does not end.
-- **Set complement accepts nothing.** `[^abc]` correctly rejects `a`, `b`, `c`, but also rejects
-  every other character.
-- **`|` only works inside a group.** `a|b` matches neither `a` nor `b`; use `(a|b)`.
-- **`{n}` quantifiers on single characters are ignored.** `a{2,}` does not match `aa`; they only
-  work on sets and groups (`[a]{2,}`, `(a){2,}`).
-- **An empty pattern crashes.** `Reg ""` raises *attempt to get length of a nil value*.
-- **Global leak.** Compiling a regex sets a global `nfa` (missing `local` in `parser.lua`).
+Priorities:
+- **P0, urgent:** silently wrong results, or one bad call breaks every later one.
+- **P1, high:** crashes or hangs on input that looks reasonable.
+- **P2, medium:** misparses you can work around, the search API, performance.
+- **P3, low:** robustness and code quality.
+
+### P0: wrong results
+- **P0-1: A failed compile breaks the next one.** The parser keeps its group and backreference
+  lists at module level and clears them only after a successful compile. After
+  `pcall(Reg, "(a)\2")`, `Reg"(b)\1"` rejects `bb` and `Reg"abc"` raises an error. After a crash
+  such as P1-3, every later compile fails.
+- **P0-2: `?` after a group accepts wrong strings.** `Nfa.optional` links the start state straight
+  to the accepting states: `(a*b)?` accepts `a`, `((ab)+c)?` accepts `ab`, `(c[ab]+)?` accepts `a`.
+- **P0-3: `{n,m}` after a group accepts wrong strings.** `Nfa:times` links earlier repetitions
+  into the last copy's accepting states, which can loop: `(ba*|c){1,2}` accepts `ca`.
+- **P0-4: Zero bounds are wrong.** `{0,m}` means `{1,m+1}`, `{0,}` means `+`, and `{,m}` means
+  `{1,m}`: `[a]{0,2}` rejects `""` and accepts `aaa`.
+- **P0-5: `|` outside a group compiles to garbage.** The `|` reuses the last NFA the parser built
+  (the global from P3-9): `a|b` rejects `a` and `b` and accepts `aab`. Use `(a|b)`. An escaped,
+  quantified `:|?` breaks the same way.
+
+### P1: crashes and hangs
+- **P1-1: `%` inside a set crashes.** The set's text goes through `string.format`: `[%]`, `[a%]`.
+- **P1-2: An unterminated quantifier overflows the stack.** `[a]{2`, `(a){2`.
+- **P1-3: An empty group crashes.** `()`, `a()b`. The crash then triggers P0-1.
+- **P1-4: `{,0}` crashes** with an arithmetic error, instead of being rejected like `{0}`.
+- **P1-5: An empty pattern crashes.** `Reg ""` and `Reg(nil)` raise *attempt to get length of a
+  nil value*.
+
+### P2: misparses, search, performance
+- **P2-1: The escape character stays in a set.** `[:]a]` also matches `:`.
+- **P2-2: Unbalanced `(`, `)`, `[`, `]` are matched literally** instead of raising an error.
+- **P2-3: An empty alternative turns `|` into a literal.** `(a|)` matches `a|` but not `a`. The
+  same holds for `(|a)` and `(a||b)`.
+- **P2-4: A quantifier after a backreference applies to the byte `\1`.** `(a)\1*` rejects `aa`.
+- **P2-5: Escapes don't pair up.** `:::*` should mean a literal `:` and then a literal `*`, but it
+  parses as `:` followed by `:*`.
+- **P2-6: A `)` inside a set ends the enclosing group.** `(a[)]b)` rejects `a)b`.
+- **P2-7: `{n}` quantifiers on single characters are matched literally.** `a{2}` matches the text
+  `a{2}`. Use `[a]{2}` or `(a){2}`.
+- **P2-8: `finder` never advances.** It cuts the string one character too early, so it keeps
+  returning the same match, and its indices count from the cut instead of the original string.
+- **P2-9: `find` can skip earlier matches.** When a match ends the string, `find` returns it
+  instead of an earlier one (`Reg"[0-9]+":find"a1b2"` gives `"2", 4`), and it misses one-character
+  inputs (`find"7"` gives `"", 0`). So `findall` returns matches out of order
+  (`"a1b22c333"` → `333, 1, 22`) and `split` misses split points.
+- **P2-10: Set complement accepts nothing.** `[^abc]` rejects `a`, `b` and `c`, but also every
+  other character.
+- **P2-11: Slow on long input** (no test). `find`/`findall` are O(n³): 0.6 s for 80 characters
+  without a match. `matches` recurses once per character and copies a substring each step, so
+  100,000 characters take 5 s and 300,000 run out of memory.
+
+### P3: robustness and code quality
+- **P3-1: A `nil` subject crashes.** `:matches(nil)` and `:findall(nil)` raise index errors, while
+  `:find(nil)` treats `nil` as `""`.
+- **P3-2: Lenient parsing.** `*a`, `a**` and `+` are taken as literals, and `{1.5}` as `{1}`.
+  `{1,2,3}` prints a warning to stdout and is then matched literally (no test).
+- **P3-6: `add_edge` changes shared lists in place.** `concat` gives several states the same edge
+  list, so `Nfa:addEdge` on one of them changes the others too.
+- **P3-7: `Nfa.new` keeps the caller's `edges`/`accepting` tables** instead of copying them, and
+  `count_states` still uses `#`, which holes in the edges table can fool (no test).
+- **P3-8: Error messages contain ANSI color codes** and point into `parser.lua` instead of the
+  caller's line (no test).
+- **P3-9: Global leak.** Compiling a regex sets a global `nfa` (missing `local` in `parser.lua`).
+  This is the cause of P0-5.
 
 ### Roadmap
-- Fix the known issues above.
+- Fix the known issues: P0 first, then P1.
 - Put the modules in a namespace (`luareg.parser`, `luareg.nfa`): `parser` and `nfa` are generic
   module names that would clash once the library is installed through a rockspec.
 - A rockspec, with a `test` section so `luarocks test` runs the suite.

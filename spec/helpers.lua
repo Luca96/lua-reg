@@ -52,6 +52,30 @@ function helpers.collect(iter, limit)
    end
 end
 
+-- Run fn(Reg) against freshly loaded lua-reg modules, then restore the previous ones.
+-- The parser keeps module-level state that a failed compile leaves dirty (README P0-1);
+-- tests that compile patterns which crash or raise errors use this, so they can't
+-- break the compiles of the tests that run after them.
+function helpers.fresh(fn)
+   local names = { "luareg", "parser", "nfa" }
+   local saved = {}
+
+   for _, name in ipairs(names) do
+      saved[name] = package.loaded[name]
+      package.loaded[name] = nil
+   end
+
+   local ok, err = pcall(fn, require "luareg")
+
+   for _, name in ipairs(names) do
+      package.loaded[name] = saved[name]
+   end
+
+   if not ok then
+      error(err, 0)
+   end
+end
+
 -- True when the regex `pattern` matches the whole string `s`.
 -- (Reg:matches also returns the word; keep only the boolean.)
 function helpers.accepts(pattern, s)

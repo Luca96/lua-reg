@@ -6,6 +6,12 @@
 - fixed two README examples: a literal `:` must be escaped as `::`, and the backreference sample
   string now follows the documented group numbering
 - added a "Known issues & roadmap" section to the README
+- audited the engine: the known issues are now sorted by priority (P0 – P3), each with an ID and a
+  `#knownbug` test, and the README has a new "Limitations" section. Newly found: a failed compile
+  breaks the next one, `?` and `{n,m}` on groups accept wrong strings, zero quantifier bounds are
+  wrong, and crashes on `%` in sets, empty groups and unterminated quantifiers
+- added regression tests for nested and bounded unions, optional groups, `{n}` on sets and
+  ranges followed by `-`
 
 ## (0.04) 17/07/2018:
 - updated code due to luatable update

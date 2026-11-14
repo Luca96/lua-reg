@@ -57,8 +57,26 @@ describe("Reg:matches", function()
          check("[^abc]", {}, { "a", "b", "c" })
       end)
 
-      it("[^abc] accepts other characters #knownbug", function()
+      it("[^abc] accepts other characters P2-10 #knownbug", function()
          check("[^abc]", { "d", "z" })
+      end)
+
+      it("{0,m}, {0,} and {,m} allow zero repetitions P0-4 #knownbug", function()
+         check("[a]{0,2}", { "", "a", "aa" }, { "aaa" })
+         check("[a]{0,}", { "", "a", "aaa" })
+         check("[a]{,2}", { "", "a", "aa" }, { "aaa" })
+      end)
+
+      it("the escape character is not part of the set P2-1 #knownbug", function()
+         check("[:]a]", { "]", "a" }, { ":" })
+      end)
+
+      it("ranges can be followed by a literal '-'", function()
+         check("[a-c-e]", { "a", "b", "c", "-", "e" }, { "d" })
+      end)
+
+      it("{n} repeats a set exactly n times", function()
+         check("[ab]{2}", { "ab", "ba", "aa" }, { "a", "aba" })
       end)
    end)
 
@@ -87,6 +105,24 @@ describe("Reg:matches", function()
       it("mix with sets and quantifiers", function()
          check("[ab]{2, 4}(zz){,2}", { "abzzzz", "aazz", "abazz", "abbbzz" }, { "a" })
       end)
+
+      it("an optional group can be followed by more pattern", function()
+         check("(a)?b", { "b", "ab" }, { "", "a", "aab" })
+      end)
+
+      it("? accepts only the group or nothing P0-2 #knownbug", function()
+         check("(a*b)?", { "", "b", "aab" }, { "a", "aaa" })
+         check("((ab)+c)?", { "", "abc", "ababc" }, { "ab" })
+         check("(c[ab]+)?", { "", "ca", "cab" }, { "a", "b" })
+      end)
+
+      it("{n,m} accepts only n to m whole repetitions P0-3 #knownbug", function()
+         check("(ba*|c){1,2}", { "c", "ba", "cc", "baa", "cba", "bac" }, { "ca", "a", "ccc" })
+      end)
+
+      it("a ) inside a set does not close the group P2-6 #knownbug", function()
+         check("(a[)]b)", { "a)b" }, { "ab" })
+      end)
    end)
 
    describe("unions", function()
@@ -101,8 +137,19 @@ describe("Reg:matches", function()
          check("([a-z]+|[0-9]+)x", { "abcx", "12x" }, { "a1x" })
       end)
 
-      it("work outside a group #knownbug", function()
-         check("a|b", { "a", "b" })
+      it("can be nested and bounded", function()
+         check("((a|b)c)+", { "ac", "acbc", "bcbcac" }, { "", "ab", "acb" })
+         check("(a|b){2,3}", { "ab", "ba", "bab", "aaa" }, { "a", "abab" })
+      end)
+
+      it("work outside a group P0-5 #knownbug", function()
+         check("a|b", { "a", "b" }, { "aab", "a|b" })
+         check("ab|cd", { "ab", "cd" }, { "abbcd" })
+      end)
+
+      it("accept an empty alternative P2-3 #knownbug", function()
+         check("(a|)", { "", "a" }, { "a|" })
+         check("(|a)", { "", "a" }, { "|a" })
       end)
    end)
 
@@ -116,6 +163,10 @@ describe("Reg:matches", function()
          -- \1 (ab(123))+  \2 (000)*  \3 (ab(123))  \4 (000)  \5 (123)
          check("(ab(123))+\3(000)*\4\5", { "ab123ab123000000123", "ab123ab123000123" },
                { "ab123000ab123123", "ab123ab123123" })
+      end)
+
+      it("can be quantified P2-4 #knownbug", function()
+         check("(a)\1*", { "a", "aa", "aaa" }, { "a\1" })
       end)
    end)
 
@@ -135,9 +186,18 @@ describe("Reg:matches", function()
       it("work inside unions", function()
          check("::(aa|bb|:*:+)+:[abc]", { ":aa*+bb[abc]" }, { "aa[abc]" })
       end)
+
+      it("an escaped | can be quantified P0-5 #knownbug", function()
+         check("x:|?", { "x", "x|" })
+      end)
+
+      it("pair up, so ::: is a literal ':' followed by an escape P2-5 #knownbug", function()
+         check(":::*", { ":*" }, { "::", ":::" })
+      end)
    end)
 
-   it("{n} quantifiers apply to single characters #knownbug", function()
+   it("{n} quantifiers apply to single characters P2-7 #knownbug", function()
       check("a{2,}", { "aa", "aaaa" }, { "a" })
+      check("a{2}", { "aa" }, { "a{2}" })
    end)
 end)

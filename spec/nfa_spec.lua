@@ -109,4 +109,16 @@ describe("Nfa", function()
          assert.are.equal(m, m:times())
       end)
    end)
+
+   describe(":addEdge", function()
+      it("changes only the given state P3-6 #knownbug", function()
+         -- (a|b)c: the accepting states of a (3) and b (5) both get an epsilon edge
+         -- to c's start state, and concat stores the same list object for both
+         local m = (char "a" + char "b") .. char "c"
+         assert.are.same({ "ac", "bc" }, accepted(m, { "a", "b", "ac", "bc" }))
+
+         m:addEdge(3, Nfa.epsilon, { 7 })  -- let "a" skip the c
+         assert.are.same({ "a", "ac", "bc" }, accepted(m, { "a", "b", "ac", "bc" }))
+      end)
+   end)
 end)
