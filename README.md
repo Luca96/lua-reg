@@ -26,14 +26,15 @@ busted --exclude-tags=knownbug   # skip the tests for the known issues below
 ```
 
 ## Working features:
-- quantifiers: `*, +, ?, {n}, {n, m}, {,n}, {n,}` 
+- quantifiers: `*, +, ?, {n}, {n, m}, {,n}, {n,}` (`{,n}` and `{0,n}` allow zero to n
+  repetitions, `{0,}` is the same as `*`)
 - sets: `[abc], [abc]+, [abc]*, [abc]?`
 - set complement: `[^abc]`
 - ranges: `[0-9], [a-zA-Z]`
 - groups: `(abc[0-9]abc)`
 - groups inside groups: `(00(abc)*00)` 
 - group backreference: `(abc)\2(123)\1`
-- unions of expressions: `(A|B|C)`
+- unions of expressions: `A|B`, `(A|B|C)`
 - escape reserved characters with `:` 
 
 ## Examples
@@ -123,7 +124,9 @@ splits:eachi(print)
 ## Known issues & roadmap
 This section tracks what is still open. Update it when an item is fixed or a new one is found.
 Each known issue has an ID, and a `#knownbug` test in `spec/` whose name contains that ID
-(`busted --filter="P0%-2"` runs one; the filter is a Lua pattern, so escape the `-`). Remove an entry, and the tag from its test, when you fix it.
+(`busted --filter="P1%-2"` runs one; the filter is a Lua pattern, so escape the `-`). When you
+fix one, remove its entry here and the tag from its test, and keep the ID in the test name. IDs
+are never reused.
 
 Priorities:
 - **P0, urgent:** silently wrong results, or one bad call breaks every later one.
@@ -132,25 +135,12 @@ Priorities:
 - **P3, low:** robustness and code quality.
 
 ### P0: wrong results
-- **P0-1: A failed compile breaks the next one.** The parser keeps its group and backreference
-  lists at module level and clears them only after a successful compile. After
-  `pcall(Reg, "(a)\2")`, `Reg"(b)\1"` rejects `bb` and `Reg"abc"` raises an error. After a crash
-  such as P1-3, every later compile fails.
-- **P0-2: `?` after a group accepts wrong strings.** `Nfa.optional` links the start state straight
-  to the accepting states: `(a*b)?` accepts `a`, `((ab)+c)?` accepts `ab`, `(c[ab]+)?` accepts `a`.
-- **P0-3: `{n,m}` after a group accepts wrong strings.** `Nfa:times` links earlier repetitions
-  into the last copy's accepting states, which can loop: `(ba*|c){1,2}` accepts `ca`.
-- **P0-4: Zero bounds are wrong.** `{0,m}` means `{1,m+1}`, `{0,}` means `+`, and `{,m}` means
-  `{1,m}`: `[a]{0,2}` rejects `""` and accepts `aaa`.
-- **P0-5: `|` outside a group compiles to garbage.** The `|` reuses the last NFA the parser built
-  (the global from P3-9): `a|b` rejects `a` and `b` and accepts `aab`. Use `(a|b)`. An escaped,
-  quantified `:|?` breaks the same way.
+None open (P0-1 to P0-5 were fixed; see the changelog).
 
 ### P1: crashes and hangs
 - **P1-1: `%` inside a set crashes.** The set's text goes through `string.format`: `[%]`, `[a%]`.
 - **P1-2: An unterminated quantifier overflows the stack.** `[a]{2`, `(a){2`.
-- **P1-3: An empty group crashes.** `()`, `a()b`. The crash then triggers P0-1.
-- **P1-4: `{,0}` crashes** with an arithmetic error, instead of being rejected like `{0}`.
+- **P1-3: An empty group crashes.** `()`, `a()b`.
 - **P1-5: An empty pattern crashes.** `Reg ""` and `Reg(nil)` raise *attempt to get length of a
   nil value*.
 
@@ -188,11 +178,9 @@ Priorities:
   `count_states` still uses `#`, which holes in the edges table can fool (no test).
 - **P3-8: Error messages contain ANSI color codes** and point into `parser.lua` instead of the
   caller's line (no test).
-- **P3-9: Global leak.** Compiling a regex sets a global `nfa` (missing `local` in `parser.lua`).
-  This is the cause of P0-5.
 
 ### Roadmap
-- Fix the known issues: P0 first, then P1.
+- Fix the known issues, P1 first.
 - Put the modules in a namespace (`luareg.parser`, `luareg.nfa`): `parser` and `nfa` are generic
   module names that would clash once the library is installed through a rockspec.
 - A rockspec, with a `test` section so `luarocks test` runs the suite.

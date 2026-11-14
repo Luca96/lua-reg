@@ -116,7 +116,10 @@ end
 Token = setmetatable(Token, 
    { __call = function(self, ...) return Token.new(...) end })
 
--- for group backreference and union
+-- for group backreference and union: filled by tk_groups and tk_backref while
+-- Parser:parse runs. Each parse rebinds them to fresh tables and keeps its own
+-- (self.groups, self.backrefs), so a parse or compile that fails halfway can't
+-- leave stale tokens for the next one.
 local group_list = table()
 local back_list  = table()
 -------------------------------------------------------------------------------
@@ -289,19 +292,22 @@ local function handle_times(input, i)
 
       if n == nil and m == nil then
          error("for quantifier {n, m} in " .. input .. ", specify at least n or m")
+      end
 
-      elseif m and n then 
-         
-         if n <= 0 and m <= 0 then
-            error("bad numbers for quantifier {n, m} in " .. input .. ", n and m must be > 0!")
-         
+      -- {,m} means {0,m}
+      n = n or 0
+
+      if n < 0 then
+         error("bad number for quantifier {n, m} in " .. input .. ", n must be >= 0!")
+      end
+
+      if m then
+         if m <= 0 then
+            error("bad number for quantifier {n, m} in " .. input .. ", m must be > 0!")
+
          elseif m < n then
             error("bad numbers for quantifier {n, m} in " .. input .. ", n must be <= m!")
-         end   
-      end 
-
-      if m and (m > 0 and n == nil) then
-         return 1, m, d 
+         end
       end
 
       return n, m, d
@@ -792,6 +798,11 @@ end
 
 function Parser:parse()
 -- build the parse tree (needed by Parse.compile)
+   group_list = table()
+   back_list  = table()
+   self.groups   = group_list
+   self.backrefs = back_list
+
    local tree = table()
    local fifo = tokenize(self.input, table())
 
@@ -851,83 +862,86 @@ local function compile_aux(token, operation)
    
    -- build basic nfa from a simple token
    if tktype == char then
-      nfa = nfa_char(tvalue)
+      return nfa_char(tvalue)
 
    elseif tktype == char_star then
-      nfa = nfa_char_star(tvalue)
+      return nfa_char_star(tvalue)
 
    elseif tktype == char_plus then
-      nfa = nfa_char_plus(tvalue)
+      return nfa_char_plus(tvalue)
 
    elseif tktype == set then
       -- consider set-complement
-      nfa = nfa_set(tvalue, token.negate)
+      return nfa_set(tvalue, token.negate)
+
+   elseif tktype == token_or then
+      -- a '|' left outside any union, e.g. the escaped '|' of ':|?'
+      return nfa_char(tvalue)
    end
 
-   return nfa
+   error(format("cannot compile token %s (%s)", tostring(tvalue), tostring(tktype)))
 end
 
-local function before_compile()
-   -- check for tk_or inside groups
-   for i = 1, #group_list do
-      local group  = group_list[i]
-      local index  = handle_or(group)
-      local size   = #index
-      local childs = group.childs
+local function split_unions(group)
+   -- rebuild group.childs as a union when it contains balanced '|' tokens
+   local index  = handle_or(group)
+   local size   = #index
+   local childs = group.childs
 
-      if size > 0 then
-         -- group contains unions, so:
-         group.operation = op_union
+   if size > 0 then
+      -- group contains unions, so:
+      group.operation = op_union
 
-         local root = table()
-         local c = 1
+      local root = table()
+      local c = 1
 
-         size = size + 1
-         index[size] = #childs + 1
+      size = size + 1
+      index[size] = #childs + 1
 
-         -- rebuilt group.childs by adding tokens between '|'
-         for k = 1, size do
-            local t = table()
-            local j = index[k] - 1
+      -- rebuilt group.childs by adding tokens between '|'
+      for k = 1, size do
+         local t = table()
+         local j = index[k] - 1
 
-            -- token info
-            local v = ""
+         -- token info
+         local v = ""
 
-            for h = c, j do
-               local tok = childs[h]
-               v = v .. tok.value
-               t:append(tok)
-            end
-
-            c = j + 2
-
-            -- this will make parser concatenate tokens between '|'
-            local token  = Token(0, 0, token_or, v, op_concat)
-            token.childs = t
-
-            root:append(token)
+         for h = c, j do
+            local tok = childs[h]
+            v = v .. tok.value
+            t:append(tok)
          end
 
-         --
-         group.childs = root
+         c = j + 2
 
-      else
-         -- threat the '|' token as char token
-         for i = 1, #childs do
-            local tok = childs[i]
+         -- this will make parser concatenate tokens between '|'
+         local token  = Token(0, 0, token_or, v, op_concat)
+         token.childs = t
 
-            if tok.type == token_or then
-               tok.type = char
-            end
+         root:append(token)
+      end
+
+      --
+      group.childs = root
+
+   else
+      -- threat the '|' token as char token
+      for i = 1, #childs do
+         local tok = childs[i]
+
+         if tok.type == token_or then
+            tok.type = char
          end
       end
    end
+end
 
+local function resolve_backrefs(groups, backrefs)
    -- replace backref. tokens with referenced groups
-   for i = 1, #back_list do
-      local token = back_list[i]
-      local index = token.index 
-      local group = group_list[index]
+   for i = 1, #backrefs do
+      local token = backrefs[i]
+      local index = token.index
+      local group = groups[index]
 
       if group == nil then
          error("wrong group-backreference for group index: " .. index)
@@ -936,22 +950,24 @@ local function before_compile()
          token.type = g_backref .. index
       end
    end
-
-   group_list:clear()
-   back_list:clear()
 end
 
 function Parser:compile()
 -- build an nfa from a tree-of-tokens
-   local nfa = Nfa.new()
+   -- the top-level tokens act as an (unnumbered) group, so that top-level unions
+   -- like a|b are split the same way as (a|b)
+   local root = Token(0, 0, group, self.input, op_concat)
+   root.childs = self.tree
 
-   before_compile()
+   split_unions(root)
 
-   self.tree:eachi(function(tok)
-      nfa = nfa .. compile_aux(tok, tok.operation)
-   end)
+   for i = 1, #self.groups do
+      split_unions(self.groups[i])
+   end
 
-   return nfa
+   resolve_backrefs(self.groups, self.backrefs)
+
+   return compile_aux(root, root.operation)
 end
 -------------------------------------------------------------------------------
 return Parser

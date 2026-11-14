@@ -12,6 +12,18 @@
   wrong, and crashes on `%` in sets, empty groups and unterminated quantifiers
 - added regression tests for nested and bounded unions, optional groups, `{n}` on sets and
   ranges followed by `-`
+- fixed all P0 issues:
+  - a failed compile no longer breaks later ones: each parse keeps its own group and
+    backreference lists (P0-1)
+  - `?` after a group no longer accepts wrong strings, e.g. `(a*b)?` matching `a` (P0-2)
+  - `{n,m}` after a group no longer accepts wrong strings, e.g. `(ba*|c){1,2}` matching `ca` (P0-3)
+  - zero bounds work: `{0,m}` allows 0 to m repetitions and `{0,}` is `*` (P0-4)
+  - `|` works outside a group (`a|b`, `x(a)|b`), and an escaped `:|` can be quantified (P0-5)
+- **behaviour change:** `{,n}` now allows zero repetitions (0 to n), as in other regex engines;
+  it used to mean 1 to n
+- `{,0}` and negative lower bounds such as `{-1,2}` are rejected with a quantifier error instead of
+  crashing or being accepted (P1-4)
+- compiling a regex no longer sets a global `nfa` (P3-9)
 
 ## (0.04) 17/07/2018:
 - updated code due to luatable update

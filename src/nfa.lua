@@ -366,76 +366,39 @@ end
 
 function Nfa.optional(m)
 -- creates an nfa that recognize L(m)? (0 or 1)
-   local edges = tb_clone(m.edges)
-   local accepting = tb_clone(m.accepting)
+-- union with a one-state nfa that accepts only the empty word: the union adds a
+-- new start state, so loops back into m's start state can't be skipped through
+-- (an epsilon from m's own start state to its accepting states would allow that)
+   local empty = Nfa { states = 1, edges = { [1] = {} }, accepting = { 1 } }
 
-   -- connect start state to accepting states
-   accepting:eachi(function(state)
-      add_edge(edges, 1, e, { state })
-   end)   
-
-   return Nfa {
-      states = m.numStates,
-      edges  = edges,
-      accepting = accepting
-   }
+   return empty + m
 end
 
--- TODO: make times build a new nfa
 function Nfa:times(x, y)
--- make the current nfa recognize L(m){x, y}
+-- returns a new nfa that recognize L(m){x, y}: x copies of m followed by y - x
+-- optional copies (or by m* when y is nil). x defaults to 0. Without bounds, or
+-- when the result is a single copy, the current nfa itself is returned.
    if x == nil and y == nil then
       return self
    end
 
-   if x == y then
-      -- concat x - 1 times
-      local m = self
+   x = x or 0
 
-      for i = 1, x - 1 do
-         self = self .. m
-      end
+   local m = Nfa.new()
 
-   elseif not y then
-      -- concat x - 2 times + star
-      local m = self
-
-      for i = 1, x - 1 do
-         self = self .. m
-      end
-
-      self = self .. m:star()
-
-   else
-      local m = self
-      local z = y - x
-      local a = table()
-
-      --
-      for i = 1, x - 1 do
-         self = self .. m
-      end
-
-      a:append(unpack(self.accepting))
-
-      for i = 1, z - 1 do
-         self = self .. m
-         a:append(unpack(self.accepting))
-      end
-
-      self = self .. m
-      --
-
-      -- add epsilon-transition from saved acc. states to final states
-      local edges = self.edges
-      local final = self.accepting
-
-      a:unique():eachi(function(state)
-         add_edge(edges, state, e, final)
-      end)
+   for i = 1, x do
+      m = m .. self
    end
 
-   return self
+   if y == nil then
+      m = m .. self:star()
+   else
+      for i = 1, y - x do
+         m = m .. self:optional()
+      end
+   end
+
+   return m
 end
 
 mt.__add    = Nfa.union

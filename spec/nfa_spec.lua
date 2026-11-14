@@ -89,6 +89,13 @@ describe("Nfa", function()
       it("optional accepts zero or one occurrence", function()
          assert.are.same({ "", "a" }, accepted(char("a"):optional(), words))
       end)
+
+      it("optional does not loop through the start state", function()
+         -- a*b: the start state of m has an a-loop, so "a" must not be accepted
+         local astar = Nfa { states = 1, edges = { [1] = { a = { 1 } } }, accepting = { 1 } }
+         local m = (astar .. char "b"):optional()
+         assert.are.same({ "", "b", "ab" }, accepted(m, words))
+      end)
    end)
 
    describe(":times", function()
@@ -102,6 +109,18 @@ describe("Nfa", function()
 
       it("{n,} accepts n or more repetitions", function()
          assert.are.same({ "aa", "aaa", "aaaa" }, accepted(char("a"):times(2), words))
+      end)
+
+      it("{0, m} accepts zero to m repetitions", function()
+         assert.are.same({ "", "a", "aa" }, accepted(char("a"):times(0, 2), words))
+      end)
+
+      it("{0,} accepts any number of repetitions", function()
+         assert.are.same({ "", "a", "aa", "aaa", "aaaa" }, accepted(char("a"):times(0), words))
+      end)
+
+      it("{1, 3} accepts one to three repetitions", function()
+         assert.are.same({ "a", "aa", "aaa" }, accepted(char("a"):times(1, 3), words))
       end)
 
       it("returns the nfa unchanged without bounds", function()

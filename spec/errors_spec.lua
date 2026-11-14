@@ -34,9 +34,15 @@ describe("errors", function()
       end)
    end)
 
-   it("compiles the very next regex correctly after a failed one P0-1 #knownbug", function()
+   it("compiles the very next regex correctly after a failed one P0-1", function()
       fresh(function(Reg)
          pcall(Reg, "(a)\2")
+         assert.is_true((Reg("(b)\1"):matches("bb")))
+      end)
+
+      fresh(function(Reg)
+         pcall(Reg, "a()b")  -- crashes halfway through the parse (P1-3)
+         assert.is_true((Reg("abc"):matches("abc")))
          assert.is_true((Reg("(b)\1"):matches("bb")))
       end)
 
@@ -69,11 +75,18 @@ describe("errors", function()
       end)
    end)
 
-   it("reports {,0} as a bad quantifier P1-4 #knownbug", function()
+   it("reports {,0} as a bad quantifier P1-4", function()
       fresh(function(Reg)
          local ok, err = pcall(Reg, "[a]{,0}")
          assert.is_false(ok)
          assert.matches("quantifier", tostring(err), 1, true)
+      end)
+   end)
+
+   it("rejects a negative lower bound", function()
+      fresh(function(Reg)
+         assert.has_error(function() Reg "[a]{-1,2}" end)
+         assert.has_error(function() Reg "(a){-1,}" end)
       end)
    end)
 
@@ -98,7 +111,7 @@ describe("errors", function()
       end)
    end)
 
-   it("does not leak globals P3-9 #knownbug", function()
+   it("does not leak globals P3-9", function()
       local saved = rawget(_G, "nfa")
       _G.nfa = nil
 
