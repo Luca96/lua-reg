@@ -28,8 +28,8 @@ SOFTWARE.
 local table = require "luatable"
 -------------------------------------------------------------------------------
 local setmetatable = setmetatable 
-local unpack = unpack 
-local insert = table.insert 
+local unpack = table.unpack or unpack
+local insert = table.insert
 local remove = table.remove 
 local pairs  = pairs 
 local iter   = table.iter
@@ -127,12 +127,26 @@ local function computation_of(self, word)
    return epsilon_closure(self, new_states)
 end
 
+local function maxn(t)
+   -- largest positive integer key of t (table.maxn was removed in Lua 5.2);
+   -- unlike #t it is not fooled by holes in the edges table
+   local n = 0
+
+   for k in pairs(t) do
+      if type(k) == "number" and k > n and k % 1 == 0 then
+         n = k
+      end
+   end
+
+   return n
+end
+
 local function copy_states(edges, m, i)
    -- copy the states of m into the edges with offset i
    local k = 0
    local m_edges = m.edges
 
-   for state = 1, table.maxn(m_edges) do
+   for state = 1, maxn(m_edges) do
       local edge = m_edges[state] or {}
       
       k = state + i

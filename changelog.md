@@ -1,5 +1,12 @@
 # Lua-Reg Changelog
 
+## Unreleased
+- runs on Lua 5.2 – 5.4 (`unpack` is now `table.unpack`, `table.maxn` replaced by a local helper)
+- added a busted unit test suite (`spec/`)
+- fixed two README examples: a literal `:` must be escaped as `::`, and the backreference sample
+  string now follows the documented group numbering
+- added a "Known issues & roadmap" section to the README
+
 ## (0.04) 17/07/2018:
 - updated code due to luatable update
 - added set-complement feature
