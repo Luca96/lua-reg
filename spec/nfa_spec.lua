@@ -130,14 +130,82 @@ describe("Nfa", function()
    end)
 
    describe(":addEdge", function()
-      it("changes only the given state P3-6 #knownbug", function()
+      it("changes only the given state P3-6", function()
          -- (a|b)c: the accepting states of a (3) and b (5) both get an epsilon edge
-         -- to c's start state, and concat stores the same list object for both
+         -- to c's start state; concat used to store the same list object for both
          local m = (char "a" + char "b") .. char "c"
          assert.are.same({ "ac", "bc" }, accepted(m, { "a", "b", "ac", "bc" }))
 
          m:addEdge(3, Nfa.epsilon, { 7 })  -- let "a" skip the c
          assert.are.same({ "a", "ac", "bc" }, accepted(m, { "a", "b", "ac", "bc" }))
+      end)
+
+      it("doesn't change a list another state shares P3-6", function()
+         -- star links its new start state (1) and the accepting state (3) to state 2
+         local s = char("a"):star()
+         s:addEdge(1, Nfa.epsilon, { 3 })
+
+         assert.are.same({ 2, 3 }, s.edges[1][Nfa.epsilon])
+         assert.are.same({ 2 }, s.edges[3][Nfa.epsilon])
+      end)
+
+      it("doesn't change the list it is given P3-6", function()
+         local m, targets = char "a", { 2 }
+         m:addEdge(1, "b", targets)
+         m:addEdge(1, "b", { 1 })
+
+         assert.are.same({ 2 }, targets)
+         assert.are.same({ "a", "b", "ba" }, accepted(m, { "a", "b", "ba", "ab" }))
+      end)
+   end)
+
+   describe(".new with tables of the caller P3-7", function()
+      it("copies the given tables", function()
+         local edges, accepting = { [1] = { a = { 2 } } }, { 2 }
+         local m = Nfa { edges = edges, accepting = accepting }
+
+         m:addEdge(1, "a", { 1 })
+         m:addEdge(2, "b", { 2 })
+         m:acceptingStates { 1 }
+
+         assert.is_nil(getmetatable(edges))
+         assert.are.same({ [1] = { a = { 2 } } }, edges)
+         assert.are.same({ 2 }, accepting)
+      end)
+
+      it("is not empty when edges[1] is missing", function()
+         -- state 1 is accepting and has no edges: the language is { "" }
+         local m = Nfa { edges = { [2] = { a = { 3 } } }, accepting = { 1 } }
+
+         assert.is_false(m:isEmpty())
+         assert.are.equal(3, m.numStates)
+         assert.are.same({ "", "a" }, accepted(char "a" + m, words))
+      end)
+
+      it("counts a state that only has outgoing edges", function()
+         local m = Nfa { edges = { [5] = { a = { 1 } } }, accepting = { 1 }, start = 5 }
+
+         assert.are.equal(5, m.numStates)
+         assert.are.same({ "a" }, accepted(m, words))
+      end)
+   end)
+
+   describe("a start state other than 1 P3-10", function()
+      -- reads "a" from state 3 to 2; state 1 is unused
+      local function late_a()
+         return Nfa { edges = { [3] = { a = { 2 } } }, accepting = { 2 }, start = 3 }
+      end
+
+      it("is kept by every operation", function()
+         assert.are.same({ "a" }, accepted(late_a():copy(), words))
+         assert.are.same({ "a", "b" }, accepted(late_a() + char "b", words))
+         assert.are.same({ "a", "b" }, accepted(char "b" + late_a(), words))
+         assert.are.same({ "ab" }, accepted(late_a() .. char "b", words))
+         assert.are.same({ "ba" }, accepted(char "b" .. late_a(), words))
+         assert.are.same({ "", "a", "aa", "aaa", "aaaa" }, accepted(late_a():star(), words))
+         assert.are.same({ "a", "aa", "aaa", "aaaa" }, accepted(late_a():plus(), words))
+         assert.are.same({ "", "a" }, accepted(late_a():optional(), words))
+         assert.are.same({ "aa", "aaa" }, accepted(late_a():times(2, 3), words))
       end)
    end)
 end)

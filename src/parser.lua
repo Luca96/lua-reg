@@ -49,19 +49,23 @@ local tostring = tostring
 local setmetatable = setmetatable
 local error_ = error
 
-local err    = "\27[1;31mError: \27[0m"
 local escape = ':'
--------------------------------------------------------------------------------
--- errors
--------------------------------------------------------------------------------
-local function error(message)
-   error_(err .. message)
-end
 -------------------------------------------------------------------------------
 -- CLASS
 -------------------------------------------------------------------------------
 local Parser = {}
 local parser_mt = { __index = Parser }
+-------------------------------------------------------------------------------
+-- errors
+-------------------------------------------------------------------------------
+-- A syntax error is raised as a table with this metatable, so Reg.new can tell it
+-- from an internal error and re-raise its message at the caller's line.
+local SyntaxError = { __tostring = function(e) return e.message end }
+Parser.SyntaxError = SyntaxError
+
+local function error(message)
+   error_(setmetatable({ message = message }, SyntaxError))
+end
 
 -- characters with a meaning outside sets; escape them with ':' to match them
 local special = {
@@ -472,7 +476,8 @@ local function compile(self, node)
       return compile(self, self.groups[node.index])
    end
 
-   error(format("cannot compile node %s", tostring(t)))
+   -- an internal bug, not a syntax error: keep its position in this file
+   error_(format("cannot compile node %s", tostring(t)))
 end
 
 function Parser:compile()

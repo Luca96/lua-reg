@@ -39,6 +39,11 @@ local print  = print
 local pairs  = pairs 
 local ipairs = ipairs 
 local type   = type 
+local error  = error
+local pcall  = pcall
+local tonumber = tonumber
+local tostring = tostring
+local getmetatable = getmetatable
 -------------------------------------------------------------------------------
 -- CLASS
 -------------------------------------------------------------------------------
@@ -52,27 +57,63 @@ local mt  = { __index = Reg }
 -------------------------------------------------------------------------------
 -- private functions
 -------------------------------------------------------------------------------
+local function subject(str, fname, level)
+-- the string argument of a method: nil is "", a number becomes its string (like
+-- Lua's string functions); anything else is an error at the caller's line
+-- (level 3 = the caller of the function that calls subject, as a plain call)
+   local t = type(str)
 
+   if t == "string" then
+      return str
+   elseif str == nil then
+      return ""
+   elseif t == "number" then
+      return tostring(str)
+   end
+
+   error(format("bad argument #1 to '%s' (string expected, got %s)", fname, t), level or 3)
+end
+
+local function build(input)
+-- parse and compile a regex. A syntax error is re-raised as a plain message at
+-- level 3: 1 = build, 2 = Reg.new or Reg(...), 3 = the line that compiled the
+-- regex. Both call build as a plain call (not a tail call), so the level holds on
+-- every Lua version. Any other error is an internal bug and is re-raised as is.
+   input = subject(input, "Reg", 4)
+
+   local ok, result = pcall(function()
+      local parser = Parser.new(input)
+      parser:parse()
+      return { parser = parser, nfa = parser:compile() }
+   end)
+
+   if not ok then
+      if getmetatable(result) == Parser.SyntaxError then
+         error(result.message, 3)
+      end
+
+      error(result, 0)
+   end
+
+   local self = setmetatable(result, mt)
+   self.input = input
+
+   return self
+end
 -------------------------------------------------------------------------------
 -- Constructors
 -------------------------------------------------------------------------------
 function Reg.new(input)
--- parse and compile the given regex
-   local self = setmetatable({}, mt)
-   self.input = input or ""
-
-   self.parser = Parser.new(input)
-   self.parser:parse()
-
-   self.nfa = self.parser:compile()
-
+-- parse and compile the given regex (a string; nil is the empty pattern)
+   local self = build(input)
    return self
 end
 -------------------------------------------------------------------------------
 -- Methods
 -------------------------------------------------------------------------------
 function Reg:matches(str)
--- returns true if the given string matches the regex
+-- returns true if the given string matches the regex (also returns the string)
+   str = subject(str, "matches")
    return self.nfa:compute(str)
 end
 
@@ -80,8 +121,24 @@ function Reg:find(str, init)
 -- the leftmost-longest match at index init (default 1) or later: returns the
 -- matched substring and its start index, or "", 0 without a match.
 -- An empty match is a match too: Reg"a*":find"bbb" returns "", 1.
-   str  = str or ""
-   init = init or 1
+-- As in string.find, a negative init counts from the end of str.
+   str = subject(str, "find")
+
+   if init == nil then
+      init = 1
+   else
+      local n = tonumber(init)
+
+      if n == nil then
+         error(format("bad argument #2 to 'find' (number expected, got %s)", type(init)), 2)
+      end
+
+      init = n
+   end
+
+   if init < 0 then
+      init = #str + init + 1
+   end
 
    if init < 1 then
       init = 1
@@ -132,6 +189,7 @@ end
 function Reg:finder(str)
 -- return an iterator over every match: each step returns the matched substring
 -- and its start index in str
+   str = subject(str, "finder")
    local next_match = each_match(self, str)
 
    return function()
@@ -142,6 +200,7 @@ end
 
 function Reg:findall(str)
 -- returns a list of the substrings that match the regex, in order
+   str = subject(str, "findall")
    local list = table()
 
    for s in each_match(self, str) do
@@ -153,6 +212,7 @@ end
 
 function Reg:split(str, remove_empty)
 -- returns the list of pieces of str between the matches of the regex
+   str = subject(str, "split")
    local list = table()
    local from = 1
 
@@ -172,5 +232,10 @@ function Reg:split(str, remove_empty)
    return list
 end
 -------------------------------------------------------------------------------
-return setmetatable(Reg, { __call = function(t, ...) return Reg.new(...) end })
+return setmetatable(Reg, {
+   __call = function(t, input)
+      local self = build(input)  -- not a tail call: see build
+      return self
+   end,
+})
 -------------------------------------------------------------------------------

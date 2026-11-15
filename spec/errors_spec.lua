@@ -172,10 +172,66 @@ describe("errors", function()
       }
    end)
 
-   it("treats a nil subject like an empty string P3-1 #knownbug", function()
+   it("treats a nil subject like an empty string P3-1", function()
       fresh(function(Reg)
          assert.is_false((Reg("a"):matches(nil)))
+         assert.is_true((Reg("a*"):matches(nil)))
          assert.are.same({}, h.plain(Reg("a"):findall(nil)))
+         assert.are.same({}, h.collect(Reg("a"):finder(nil), 5))
+         assert.are.same({ "" }, h.plain(Reg("a"):split(nil)))
+         assert.are.same({ "", 0 }, { Reg("a"):find(nil) })
+      end)
+   end)
+
+   it("turns a number subject or pattern into a string P3-1", function()
+      fresh(function(Reg)
+         assert.is_true((Reg("1"):matches(1)))
+         assert.are.same({ "2", 2 }, { Reg("2"):find(123) })
+         assert.are.same({ "1", "1" }, h.plain(Reg("1"):findall(101)))
+         assert.is_true((Reg(123):matches("123")))
+      end)
+   end)
+
+   it("rejects other subject and pattern types P3-1", function()
+      fresh(function(Reg)
+         local r = Reg "a"
+         local cases = {
+            { function() local _ = r:matches({}) end,    "bad argument #1 to 'matches' (string expected, got table)" },
+            { function() local _ = r:find(true) end,     "bad argument #1 to 'find' (string expected, got boolean)" },
+            { function() local _ = r:finder({}) end,     "bad argument #1 to 'finder' (string expected, got table)" },
+            { function() local _ = r:findall({}) end,    "bad argument #1 to 'findall' (string expected, got table)" },
+            { function() local _ = r:split({}) end,      "bad argument #1 to 'split' (string expected, got table)" },
+            { function() local _ = r:find("a", "x") end, "bad argument #2 to 'find' (number expected, got string)" },
+            { function() local _ = Reg({}) end,          "bad argument #1 to 'Reg' (string expected, got table)" },
+            { function() local _ = Reg.new(true) end,    "bad argument #1 to 'Reg' (string expected, got boolean)" },
+         }
+
+         for _, case in ipairs(cases) do
+            local ok, err = pcall(case[1])
+            assert.is_false(ok)
+            assert.matches(case[2], tostring(err), 1, true)
+            -- raised at the caller's line, here in this file
+            assert.matches("errors_spec%.lua:%d+: ", tostring(err))
+         end
+      end)
+   end)
+
+   it("reports syntax errors without color codes, at the caller's line P3-8", function()
+      fresh(function(Reg)
+         local compilers = {
+            function() local _ = Reg "*a" end,
+            function() local _ = Reg.new "*a" end,
+            function() local _ = Reg "(a\1)" end,   -- raised while compiling, not parsing
+         }
+
+         for _, compile in ipairs(compilers) do
+            local ok, err = pcall(compile)
+            assert.is_false(ok)
+            err = tostring(err)
+            assert.is_nil(err:find("\27", 1, true), err)
+            assert.matches("^[^:]*errors_spec%.lua:%d+: ", err)
+            assert.not_matches("parser.lua", err, 1, true)
+         end
       end)
    end)
 

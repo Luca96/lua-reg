@@ -31,7 +31,8 @@ local setmetatable = setmetatable
 local unpack = table.unpack or unpack
 local insert = table.insert
 local remove = table.remove 
-local pairs  = pairs 
+local pairs  = pairs
+local next   = next
 local iter   = table.iter
 local ipairs = ipairs 
 local type   = type 
@@ -138,35 +139,45 @@ local function copy_accepting(accepting, m, i)
    end 
 end
 
+local function copy_list(states)
+   -- a fresh enhanced copy of a list of states
+   local list = table()
+
+   for i = 1, #states do
+      list[i] = states[i]
+   end
+
+   return list
+end
+
 local function add_edge(edges, state, char, states)
-   -- add a new edge to edges
+   -- add a new edge to edges.
+   -- Edge lists are values: they are never changed in place, so several states (or
+   -- several nfas) can share one list. A new edge stores a copy of `states`; adding
+   -- to an existing edge builds a new merged list.
    local edges_state = edges[state]
 
    if edges_state == nil then
-      edges[state] = { [char] = states }
+      edges[state] = { [char] = copy_list(states) }
 
    elseif edges_state[char] == nil then
-      edges_state[char] = states
+      edges_state[char] = copy_list(states)
    else
-      -- add states to edges[state][char] (edge already exist)
-      edges_state[char] = table(edges_state[char]):append(unpack(states)):unique()
+      local merged = copy_list(edges_state[char])
+      merged:append(unpack(states))
+      edges_state[char] = merged:unique()
    end
 end
 
-local function count_states(m)
-   -- return the number of states of m
-   local count = 0
-   local edges = m.edges
-   local accepting = m.accepting
+local function count_states(edges, accepting, start)
+   -- the number of states: the highest state that has edges, is the target of an
+   -- edge, is accepting or is the start state (holes in edges don't matter)
+   local count = max(maxn(edges), start or 0)
 
-   for i = 1, #edges do
-      local edge = edges[i] or {}
-
+   for _, edge in pairs(edges) do
       for _, states in pairs(edge) do
-         if type(states) == "table" then
-            for j = 1, #states do
-               count = max(count, states[j])
-            end
+         for j = 1, #states do
+            count = max(count, states[j])
          end
       end
    end
@@ -175,7 +186,7 @@ local function count_states(m)
       count = max(count, accepting[i])
    end
 
-   return count or 0
+   return count
 end
 -------------------------------------------------------------------------------
 -- COMPUTATION
@@ -364,28 +375,50 @@ end
 -------------------------------------------------------------------------------
 -- NEW
 -------------------------------------------------------------------------------
-function Nfa.new(params)
--- creates a non-deterministic finite acceptor
-   params = params or {}
-   
+local function make(edges, accepting, states, start)
+-- builds an nfa that adopts the given tables: only for tables the caller has just
+-- built and keeps no reference to (Nfa.new copies what it is given)
    local self = setmetatable({}, mt)
 
    -- structure
-   self.edges = table(params.edges)
-   self.current = params.start or 1
-   self.accepting = table(params.accepting)
+   self.edges = table(edges)
+   self.current = start or 1
+   self.accepting = table(accepting)
 
    -- info
-   self.numStates = params.states or count_states(self) or 0
+   self.numStates = states or count_states(edges, accepting, start)
 
    return self
 end
+
+function Nfa.new(params)
+-- creates a non-deterministic finite acceptor from
+-- { edges = { [state] = { [char] = { states } } }, accepting = { states },
+--   states = number of states (optional), start = start state (default 1) }.
+-- The given tables are copied: changing the nfa doesn't change them, or vice versa.
+   params = params or {}
+
+   local edges = table()
+
+   for state, edge in pairs(params.edges or {}) do
+      local copy = {}
+
+      for char, states in pairs(edge) do
+         copy[char] = copy_list(states)
+      end
+
+      edges[state] = copy
+   end
+
+   return make(edges, copy_list(params.accepting or {}), params.states, params.start)
+end
+
 function Nfa.emptyWord()
 -- creates a one-state nfa that accepts only the empty word "".
 -- Unlike Nfa.new() (no edges: the identity that union and concat skip), it has
 -- an edges[1] entry, so union, concat, star... treat it as a real operand.
 -- Concatenating it leaves a language unchanged: L .. {""} = L.
-   return Nfa { states = 1, edges = { [1] = {} }, accepting = { 1 } }
+   return make({ [1] = {} }, { 1 }, 1)
 end
 -------------------------------------------------------------------------------
 -- building
@@ -404,7 +437,7 @@ end
 
 function Nfa:isEmpty()
 -- check if the nfa has no edges
-   return #self.edges == 0
+   return next(self.edges) == nil
 end
 
 function Nfa:copy()
@@ -415,7 +448,7 @@ function Nfa:copy()
    copy_states(edges, self, 0)
    copy_accepting(accepting, self, 0)
 
-   return Nfa { edges = edges, accepting = accepting, states = self.numStates }
+   return make(edges, accepting, self.numStates, self.current)
 end
 -------------------------------------------------------------------------------
 -- UNION, CONCATENATION, STAR,...
@@ -432,14 +465,14 @@ function Nfa.union(m1, m2)
    copy_states(edges, m2, k)
 
    -- new start state (that connects start state of m1 and m2)
-   edges[1] = { [e] = { 2, k + 1 } }
+   edges[1] = { [e] = { m1.current + 1, m2.current + k } }
 
    -- accepting states as union of accepting states of m1 and m2
    local accepting = table()
    copy_accepting(accepting, m1, 1)
    copy_accepting(accepting, m2, k)
 
-   return Nfa { edges = edges, accepting = accepting, states = k + m2.numStates }
+   return make(edges, accepting, k + m2.numStates)
 end
 
 function Nfa.concat(m1, m2)
@@ -457,19 +490,19 @@ function Nfa.concat(m1, m2)
    copy_accepting(accepting, m2, k)
 
    -- connect with epsilon-transition final states of m1 to start state of m2
-   local initial = { k + 1 }
+   local initial = { m2.current + k }
 
    m1.accepting:eachi(function(state)
       add_edge(edges, state, e, initial)
    end)
 
-   return Nfa { edges = edges, accepting = accepting, states = k + m2.numStates }
+   return make(edges, accepting, k + m2.numStates, m1.current)
 end
 
 function Nfa.star(m)
 -- creates a new nfa recognize L(m)*
    local edges = table()
-   local start = { 2 }
+   local start = { m.current + 1 }
    
    copy_states(edges, m, 1)
 
@@ -487,13 +520,13 @@ function Nfa.star(m)
    -- add start state to accepting state (to accept epsilon)
    accepting[#accepting + 1] = 1
 
-   return Nfa { edges = edges, accepting = accepting, states = m.numStates + 1 }
+   return make(edges, accepting, m.numStates + 1)
 end
 
 function Nfa.plus(m)
 -- creates an nfa that recognize L(m)+
    local edges = tb_clone(m.edges)
-   local start = { 1 }
+   local start = { m.current }
    local accepting = tb_clone(m.accepting)
    
    -- connect accepting states with start state
@@ -501,11 +534,7 @@ function Nfa.plus(m)
       add_edge(edges, state, e, start)
    end)   
 
-   return Nfa {
-      states = m.numStates,
-      edges  = edges,
-      accepting = accepting 
-   }
+   return make(edges, accepting, m.numStates, m.current)
 end
 
 function Nfa.optional(m)

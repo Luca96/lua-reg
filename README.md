@@ -43,6 +43,9 @@ busted --exclude-tags=knownbug   # skip the tests for the known issues below
   (`a{1,2,3}`), an empty set `[]` or a trailing `:`
 - searching with `find`, `finder`, `findall` and `split`: leftmost-longest matches, found in one
   pass over the string (time linear in its length)
+- arguments work like Lua's string functions: a `nil` subject is `""`, a number is turned into a
+  string, and any other type raises a *bad argument* error. Errors, syntax errors included, are
+  plain messages that point at the line that called lua-reg
 
 ## Examples
 ```lua
@@ -101,7 +104,7 @@ local reg = Reg "[0-9]+"
 local input = "123, 456, 1000, 1900"
 
 -- find: the leftmost-longest match and its start index ("", 0 without a match);
--- an optional second argument is the index to start from
+-- an optional second argument is the index to start from (negative: from the end)
 print(reg:find(input))
 print(reg:find(input, 4))
 
@@ -156,17 +159,9 @@ None open (P1-1 to P1-7 were fixed; see the changelog).
 None open (P2-1 to P2-11 were fixed; see the changelog).
 
 ### P3: robustness and code quality
-- **P3-1: A `nil` subject crashes.** `:matches(nil)` and `:findall(nil)` raise index errors, while
-  `:find(nil)` treats `nil` as `""`.
-- **P3-6: `add_edge` changes shared lists in place.** `concat` gives several states the same edge
-  list, so `Nfa:addEdge` on one of them changes the others too.
-- **P3-7: `Nfa.new` keeps the caller's `edges`/`accepting` tables** instead of copying them, and
-  `count_states` still uses `#`, which holes in the edges table can fool (no test).
-- **P3-8: Error messages contain ANSI color codes** and point into `parser.lua` instead of the
-  caller's line (no test).
+None open (P3-1 to P3-10 were fixed; see the changelog).
 
 ### Roadmap
-- Fix the known issues (P3).
 - Put the modules in a namespace (`luareg.parser`, `luareg.nfa`): `parser` and `nfa` are generic
   module names that would clash once the library is installed through a rockspec.
 - A rockspec, with a `test` section so `luarocks test` runs the suite.

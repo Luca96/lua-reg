@@ -48,6 +48,14 @@ describe("searching", function()
          assert.are.same({ "1", 1 }, { digits:find("1", -3) })
       end)
 
+      it("counts a negative init from the end, like string.find P3-1", function()
+         assert.are.same({ "b", 4 }, { Reg("b"):find("abab", -2) })
+         assert.are.same({ "2", 4 }, { digits:find("a1b2", -1) })
+         assert.are.same({ "1", 2 }, { digits:find("a1b2", -3) })
+         assert.are.same({ "", 3 }, { Reg("x*"):find("abc", -1) })
+         assert.are.same({ "b", 4 }, { Reg("b"):find("abab", "3") })  -- a numeric string
+      end)
+
       it("is linear in the length of the subject", function()
          -- a per-start scan would rerun a* from every one of the 20000 positions
          local s = ("a"):rep(20000)

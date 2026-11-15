@@ -72,6 +72,23 @@
   and `findall`/`finder`/`split` include empty matches, following Lua 5.4's `string.gmatch`:
   `Reg"a*":findall"baaac"` gives `"", "aaa", ""`
 - a lone `|` matches the empty string (two empty alternatives); it used to match a literal `|`
+- fixed all P3 issues:
+  - arguments are checked like Lua's string functions: a `nil` subject is `""` in every method
+    (`matches(nil)`, `findall(nil)`, `finder(nil)`, `split(nil)` used to crash), a number subject
+    or pattern becomes a string (`Reg"1":matches(1)`, `Reg(123)`), and any other type raises
+    *bad argument #1 to 'matches' (string expected, got table)* (P3-1)
+  - `Nfa:addEdge` changes only the given state: edge lists are never changed in place, so lists
+    that several states share (after `..`, `star`, `plus`) stay intact (P3-6)
+  - `Nfa.new` copies the tables it is given (it used to keep them and set their metatable), and
+    counts states and checks for emptiness without `#`, so an nfa without `edges[1]` is no longer
+    taken for an empty one (P3-7)
+  - errors are plain messages without color codes, and syntax errors point at the line that
+    compiled the regex instead of a line in `parser.lua` (P3-8)
+  - `copy`, `..`, `+`, `star` and `plus` keep an nfa's start state when it isn't state 1
+    (`Nfa{ ..., start = 3 }`); they used to assume state 1 (P3-10, found while fixing P3-7)
+- **behaviour change:** a negative `init` in `find(str, init)` counts from the end of the
+  string, as in `string.find` (it used to be treated as 1); `init` may also be a numeric string,
+  and anything else raises *bad argument #2 to 'find'*
 
 ## (0.04) 17/07/2018:
 - updated code due to luatable update
