@@ -57,8 +57,22 @@ describe("Reg:matches", function()
          check("[^abc]", {}, { "a", "b", "c" })
       end)
 
-      it("[^abc] accepts other characters P2-10 #knownbug", function()
-         check("[^abc]", { "d", "z" })
+      it("[^abc] accepts other characters P2-10", function()
+         check("[^abc]", { "d", "z", " ", ":" }, { "", "dd" })
+         check("[^a-c]", { "d", "A" }, { "a", "b", "c" })
+      end)
+
+      it("[^...] works inside groups, unions and repeats P2-10", function()
+         check("([^ab]c)+", { "xc", "xcdc", "cc" }, { "ac", "xcbc", "" })
+         check("(x|[^x])", { "x", "y" }, { "", "xy" })
+         check("[^a]{2}", { "bc", "zz" }, { "ab", "b", "bbb" })
+         check("a[^a]*a", { "aa", "abca" }, { "aaa", "aba a" })
+      end)
+
+      it("[^...] keeps working when the nfa is copied into a bigger one P2-10", function()
+         -- the old undeft closure stored absolute state numbers, so the complement broke
+         -- once concat/union renumbered its states
+         check("x[^ab]|y[^ab]", { "xc", "yc" }, { "xa", "yb", "xy c" })
       end)
 
       it("{0,m}, {0,} and {,m} allow zero repetitions P0-4", function()

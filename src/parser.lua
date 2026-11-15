@@ -727,45 +727,23 @@ local function nfa_char_plus(char)
 end
 
 local function nfa_set(chars, complement)
-   -- build an nfa that recognize c1 U c2 U ... U cn
-   local len   = chars:len()
-   local edges = { [1] = { [epsilon] = table.init(len, table.increase) } }
-   local count = len + 2
-   local final = { count }
-      
+   -- build a 2-state nfa that reads one character of the set (state 1 -> 2).
+   -- A complement [^...] gives each listed character an explicit empty edge
+   -- (no move) and every other character the default edge to state 2.
+   local start = {}
+
+   for i = 1, chars:len() do
+      start[chars:sub(i, i)] = complement and {} or { 2 }
+   end
+
    if complement then
-      -- handle set-complement
-      count = count + 1
-
-      for i = 1, len do
-         local c = chars:sub(i, i)
-         
-         edges[i + 1] = { 
-            [c] = { count },
-            undeft = function(state, char)
-               -- check that char in not inside chars
-               for i = 1, len do
-                  if char == chars:sub(i, i) then
-                     return
-                  end
-               end
-
-               return state + count - i
-            end
-         }
-      end 
-   else
-      -- set without complement
-      for i = 1, len do
-         local c = chars:sub(i, i)
-         edges[i + 1] = { [c] = final }
-      end
+      start[Nfa.default] = { 2 }
    end
 
    return Nfa {
-      states = count,
-      edges  = edges,
-      accepting = final, 
+      states = 2,
+      edges  = { [1] = start },
+      accepting = { 2 },
    }
 end
 -------------------------------------------------------------------------------

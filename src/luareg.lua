@@ -76,121 +76,93 @@ function Reg:matches(str)
    return self.nfa:compute(str)
 end
 
-function Reg:find(str)
--- matches the first substring that satisfy the regex
--- returns the maching substring with start index
-   str = str or ""
-   
-   local len, j = str:len(), 1
+function Reg:find(str, init)
+-- the leftmost-longest match at index init (default 1) or later: returns the
+-- matched substring and its start index, or "", 0 without a match.
+-- An empty match is a match too: Reg"a*":find"bbb" returns "", 1.
+   str  = str or ""
+   init = init or 1
 
-   while len > 0 and j < len do
-      --
-      for i = len, j, -1 do
-         local sub = str:sub(j, i)
-
-         if self:matches(sub) then
-            return sub, j
-         end
-      end
-
-      for i = j, len do
-         local sub = str:sub(i, len)
-
-         if self:matches(sub) then
-            return sub, i
-         end
-      end
-
-      j = j + 1
+   if init < 1 then
+      init = 1
+   elseif init > #str + 1 then
+      return "", 0
    end
 
-   return "", 0
+   local i, j = self.nfa:search(str, init)
+
+   if i == nil then
+      return "", 0
+   end
+
+   return str:sub(i, j), i
+end
+
+local function each_match(self, str)
+-- iterator over the successive matches in str: (substring, start, end).
+-- Same rule as Lua 5.4's string.gmatch: after a match the search goes on where it
+-- ended, and an empty match is not allowed right where the previous match ended
+-- (so "a*" on "baaac" gives "", "aaa", "" at 1, 2 and 6).
+   local nfa  = self.nfa
+   local n    = #str
+   local init = 1
+   local last = nil  -- the index right after the previous match
+
+   return function()
+      while init <= n + 1 do
+         local i, j = nfa:search(str, init)
+
+         if i == nil then
+            init = n + 2
+            return nil
+         end
+
+         if j < i and i == last then
+            -- empty match where the previous match ended: skip it
+            init = i + 1
+         else
+            init = j >= i and j + 1 or i + 1
+            last = j + 1
+            return str:sub(i, j), i, j
+         end
+      end
+   end
 end
 
 function Reg:finder(str)
--- return an iterator that finds every substring that matches
-   local s, i = nil, nil
+-- return an iterator over every match: each step returns the matched substring
+-- and its start index in str
+   local next_match = each_match(self, str)
 
    return function()
-      s, i = self:find(str)
-      str  = str:sub(i + s:len() - 1)
-
-      if i <= 0 then
-         return
-      end
-
+      local s, i = next_match()
       return s, i
-   end 
+   end
 end
 
 function Reg:findall(str)
--- returns a list of substring that matches the regex
-   local list  = table()
-   local len   = str:len()
-   local j     = 1
-   local match = false
+-- returns a list of the substrings that match the regex, in order
+   local list = table()
 
-   while len > 0 and j < len do
-      match = false
-      --
-      for i = len, j, -1 do
-         local sub = str:sub(j, i)
-
-         if self:matches(sub) then
-            list:append(sub)
-
-            str = str:sub(i + 1, len)
-            len = str:len()
-
-            match = true
-            j = 1
-
-            break
-         end
-      end
-
-      if not match then
-         for i = j, len do
-            local sub = str:sub(i, len)
-
-            if self:matches(sub) then
-               list:append(sub)
-
-               str = str:sub(j, i - 1)
-               len = str:len()
-
-               match = true
-               j = 1
-
-               break
-            end
-         end
-      end
-
-      if not match then
-         j = j + 1
-      end
+   for s in each_match(self, str) do
+      list:append(s)
    end
 
-   return list 
+   return list
 end
 
 function Reg:split(str, remove_empty)
--- returns a list of string obtained by splitting the input string
+-- returns the list of pieces of str between the matches of the regex
    local list = table()
-   local size = 0
-   local s, i = self:find(str) 
+   local from = 1
 
-   while i > 0 do
-      list:append(str:sub(1, i - 1))
-      
-      size = i + s:len()
-      str  = str:sub(size)
-      s, i = self:find(str)
+   for _, i, j in each_match(self, str) do
+      list:append(str:sub(from, i - 1))
+      from = j + 1
    end
 
    -- add the last substring after the last match
-   list:append(str)
+   list:append(str:sub(from))
 
    if remove_empty then
       -- remove all the empty string

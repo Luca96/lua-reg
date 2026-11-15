@@ -46,8 +46,9 @@ local tb_klist  = table.keyList
 
 local void = function() end
 local e = "epsilon"  -- epsilon
+local d = "default"  -- taken on a character that has no edge of its own
 -------------------------------------------------------------------------------
-local Nfa = { epsilon = e }
+local Nfa = { epsilon = e, default = d }
 local mt  = { __index = Nfa }
 -------------------------------------------------------------------------------
 -- private functions
@@ -95,37 +96,6 @@ local function epsilon_closure(self, states)
    return closure
 end
 
-local function computation_of(self, word)
-   -- compute the extended transition function of a Nfa
-   local len = word:len()
-
-   if len == 0 then  
-      return epsilon_closure(self, { self.current })
-   end
-   
-   local char = word:sub(len, len)
-   local states = computation_of(self, word:sub(1, len - 1))
-   local new_states = table()
-   
-   for i = 1, #states do
-      local state = states[i]
-      local edges = self.edges[state] or {}
-
-      do
-         local states = edges[char]
-
-         if states then
-            new_states:append(unpack(states))
-         
-         elseif edges.undeft then
-            -- handle undefined-transitions on state
-            new_states:append(edges.undeft(state, char))
-         end
-      end
-   end
-
-   return epsilon_closure(self, new_states)
-end
 
 local function maxn(t)
    -- largest positive integer key of t (table.maxn was removed in Lua 5.2);
@@ -150,14 +120,11 @@ local function copy_states(edges, m, i)
       local edge = m_edges[state] or {}
       
       k = state + i
-      edges[k] = { undeft = edge.undeft }
+      edges[k] = {}
 
+      -- every value is a list of states (characters, epsilon and default alike)
       for char, states in pairs(edge) do
-         -- do not consider undeft
-         if char ~= "undeft" then
-            states = tb_clone(states):map(table.sum, i)
-            edges[k][char] = states
-         end
+         edges[k][char] = tb_clone(states):map(table.sum, i)
       end
    end
 
@@ -213,17 +180,186 @@ end
 -------------------------------------------------------------------------------
 -- COMPUTATION
 -------------------------------------------------------------------------------
-function Nfa:compute(word)
-   local states = computation_of(self, word)
-   local finals = self.accepting
+function Nfa:startStates()
+-- the states the nfa is in before reading anything (the start state's closure)
+   return epsilon_closure(self, { self.current })
+end
+
+function Nfa:step(states, char)
+-- the states reached from `states` by reading the one-character string `char`.
+-- A state follows its edge for char; if it has none, its default edge (if any).
+-- An explicit empty list ({}) for char means "no move", even with a default edge.
+   local edges = self.edges
+   local out, n = {}, 0
 
    for i = 1, #states do
-      if finals:has(states[i]) then
-         return true, word
+      local edge = edges[states[i]]
+
+      if edge then
+         local targets = edge[char] or edge[d]
+
+         if targets then
+            for j = 1, #targets do
+               n = n + 1
+               out[n] = targets[j]
+            end
+         end
       end
    end
 
-   return false, word
+   return epsilon_closure(self, out)
+end
+
+function Nfa:anyAccepting(states)
+-- true when one of `states` is an accepting state
+   local accepting = self.accepting
+   local set = {}
+
+   for i = 1, #accepting do
+      set[accepting[i]] = true
+   end
+
+   for i = 1, #states do
+      if set[states[i]] then
+         return true
+      end
+   end
+
+   return false
+end
+
+local function closure_cache(self)
+-- the epsilon closure of each single state, computed on first use and kept on
+-- the nfa (Nfa:addEdge drops it, since a new edge can change closures)
+   local cache = self.closures
+
+   if cache == nil then
+      cache = {}
+      self.closures = cache
+   end
+
+   return function(state)
+      local c = cache[state]
+
+      if c == nil then
+         c = epsilon_closure(self, { state })
+         cache[state] = c
+      end
+
+      return c
+   end
+end
+
+function Nfa:search(str, init)
+-- leftmost-longest match of the nfa inside str, starting at index init or later.
+-- Returns the start and end index of the match (end = start - 1 for an empty
+-- match), or nil. One pass over str (time linear in its length), like a Pike VM:
+-- a thread is a state plus the index where its match started. Threads are kept
+-- ordered by start, earliest first; when two reach the same state the earlier one
+-- wins, since both have the same future. A new thread starts at each index until
+-- a match is found; from then on later-starting threads are dropped, and the
+-- earliest start keeps extending its end while it can.
+   local n = #str
+   local edges = self.edges
+   local closure = closure_cache(self)
+   local start = closure(self.current)
+
+   local accepting = {}
+
+   for i = 1, #self.accepting do
+      accepting[self.accepting[i]] = true
+   end
+
+   local states, starts, present = {}, {}, {}
+   local best_start, best_end
+   local pos = init or 1
+
+   while true do
+      -- start a new thread at pos while nothing has matched yet
+      if best_start == nil then
+         for k = 1, #start do
+            local s = start[k]
+
+            if not present[s] then
+               present[s] = true
+               states[#states + 1] = s
+               starts[#starts + 1] = pos
+            end
+         end
+      end
+
+      -- the first accepting thread has the earliest start
+      for k = 1, #states do
+         if accepting[states[k]] then
+            if best_start == nil or starts[k] <= best_start then
+               best_start, best_end = starts[k], pos - 1
+            end
+
+            break
+         end
+      end
+
+      -- once something matched, threads that started later can't win
+      if best_start then
+         local m = #states
+
+         while m > 0 and starts[m] > best_start do
+            states[m], starts[m] = nil, nil
+            m = m - 1
+         end
+      end
+
+      if pos > n or (best_start and #states == 0) then
+         break
+      end
+
+      -- step every thread on the character at pos, keeping the order
+      local char = str:sub(pos, pos)
+      local next_states, next_starts, next_present = {}, {}, {}
+
+      for k = 1, #states do
+         local edge = edges[states[k]]
+         local targets = edge and (edge[char] or edge[d])
+
+         if targets then
+            for j = 1, #targets do
+               local c = closure(targets[j])
+
+               for h = 1, #c do
+                  local s = c[h]
+
+                  if not next_present[s] then
+                     next_present[s] = true
+                     next_states[#next_states + 1] = s
+                     next_starts[#next_starts + 1] = starts[k]
+                  end
+               end
+            end
+         end
+      end
+
+      states, starts, present = next_states, next_starts, next_present
+      pos = pos + 1
+   end
+
+   return best_start, best_end
+end
+
+function Nfa:compute(word)
+-- true when the nfa accepts the whole word (also returns the word).
+-- A plain loop over the characters: no recursion and no substring copies.
+   local states = self:startStates()
+   local sub = word.sub
+
+   for k = 1, #word do
+      if #states == 0 then
+         break
+      end
+
+      states = self:step(states, sub(word, k, k))
+   end
+
+   return self:anyAccepting(states), word
 end
 -------------------------------------------------------------------------------
 -- NEW
@@ -257,6 +393,7 @@ end
 function Nfa:addEdge(state, char, states)
 -- add a new edge to current nfa
    add_edge(self.edges, state, char, states)
+   self.closures = nil  -- cached epsilon closures may have changed
 end
 
 function Nfa:acceptingStates(states)
