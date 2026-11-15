@@ -138,17 +138,14 @@ Priorities:
 None open (P0-1 to P0-5 were fixed; see the changelog).
 
 ### P1: crashes and hangs
-- **P1-1: `%` inside a set crashes.** The set's text goes through `string.format`: `[%]`, `[a%]`.
-- **P1-2: An unterminated quantifier overflows the stack.** `[a]{2`, `(a){2`.
-- **P1-3: An empty group crashes.** `()`, `a()b`.
-- **P1-5: An empty pattern crashes.** `Reg ""` and `Reg(nil)` raise *attempt to get length of a
-  nil value*.
+None open (P1-1 to P1-6 were fixed; see the changelog).
 
 ### P2: misparses, search, performance
 - **P2-1: The escape character stays in a set.** `[:]a]` also matches `:`.
 - **P2-2: Unbalanced `(`, `)`, `[`, `]` are matched literally** instead of raising an error.
 - **P2-3: An empty alternative turns `|` into a literal.** `(a|)` matches `a|` but not `a`. The
-  same holds for `(|a)` and `(a||b)`.
+  same holds for `(|a)` and `(a||b)`. Workaround: write the empty alternative as an empty group,
+  `(a|())`.
 - **P2-4: A quantifier after a backreference applies to the byte `\1`.** `(a)\1*` rejects `aa`.
 - **P2-5: Escapes don't pair up.** `:::*` should mean a literal `:` and then a literal `*`, but it
   parses as `:` followed by `:*`.
@@ -180,7 +177,11 @@ None open (P0-1 to P0-5 were fixed; see the changelog).
   caller's line (no test).
 
 ### Roadmap
-- Fix the known issues, P1 first.
+- Fix the known issues, P2 first.
+- Run the NFA with a loop instead of recursion (part of P2-11). `computation_of` in `nfa.lua`
+  calls itself once per character and copies the prefix with `word:sub(...)` at each level, so
+  long inputs cost O(n²) in string copying and one stack frame per character. A plain loop over
+  the string (ε-closure of the start state, then step once per byte) avoids both.
 - Put the modules in a namespace (`luareg.parser`, `luareg.nfa`): `parser` and `nfa` are generic
   module names that would clash once the library is installed through a rockspec.
 - A rockspec, with a `test` section so `luarocks test` runs the suite.

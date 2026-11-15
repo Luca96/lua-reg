@@ -244,6 +244,13 @@ function Nfa.new(params)
 
    return self
 end
+function Nfa.emptyWord()
+-- creates a one-state nfa that accepts only the empty word "".
+-- Unlike Nfa.new() (no edges: the identity that union and concat skip), it has
+-- an edges[1] entry, so union, concat, star... treat it as a real operand.
+-- Concatenating it leaves a language unchanged: L .. {""} = L.
+   return Nfa { states = 1, edges = { [1] = {} }, accepting = { 1 } }
+end
 -------------------------------------------------------------------------------
 -- building
 -------------------------------------------------------------------------------
@@ -369,9 +376,7 @@ function Nfa.optional(m)
 -- union with a one-state nfa that accepts only the empty word: the union adds a
 -- new start state, so loops back into m's start state can't be skipped through
 -- (an epsilon from m's own start state to its accepting states would allow that)
-   local empty = Nfa { states = 1, edges = { [1] = {} }, accepting = { 1 } }
-
-   return empty + m
+   return Nfa.emptyWord() + m
 end
 
 function Nfa:times(x, y)

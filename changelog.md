@@ -24,6 +24,16 @@
 - `{,0}` and negative lower bounds such as `{-1,2}` are rejected with a quantifier error instead of
   crashing or being accepted (P1-4)
 - compiling a regex no longer sets a global `nfa` (P3-9)
+- fixed all P1 issues:
+  - a `%` inside a set no longer crashes: `[%]`, `[a%]`, `[%a-c]` (P1-1)
+  - an unterminated quantifier such as `[a]{2` or `(a){2` raises an "unterminated quantifier"
+    error instead of overflowing the stack (P1-2)
+  - an empty group `()` matches only the empty string, also with a quantifier (`()*`, `(){2}`)
+    and in a union: `(a|())` means "a or nothing" (P1-3)
+  - the empty pattern `Reg ""` (and `Reg(nil)`) matches only the empty string (P1-5)
+  - a group inside a set, like the `(a)` of `[(a)](b)\1`, no longer takes a group number, so
+    `\1` refers to `(b)` instead of failing to compile (P1-6)
+- new `Nfa.emptyWord()`: an nfa that accepts only the empty string
 
 ## (0.04) 17/07/2018:
 - updated code due to luatable update

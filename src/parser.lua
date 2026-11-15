@@ -174,36 +174,6 @@ local range_intervals = table (
    97,  122   --a-z
 )
 
-local function find_ranges(input)
-   -- finds all ranges inside input string
-   local k = 1
-   local i = 0
-   local n = input:len()
-   local ranges = table()
-
-   while k < n do
-      if input:sub(k, k) == '-' then
-         local c1 = input:sub(k - 1, k - 1)
-         local c2 = input:sub(k + 1, k + 1)
-
-         if c1 ~= '' and c1 ~= '-' and c2 ~= '' and c2 ~= '-' then
-            ranges:append { k + i, c1, c2 }
-
-            input = input:sub(k + 2, n)
-            k = 1
-
-            local n1 = input:len()
-            i = i + abs(n - n1)
-            n = n1
-         end
-      end
-
-      k = k + 1
-   end
-
-   return ranges
-end
-
 local function build_range(range)
    -- transform the range into a string of characters
    local s = ""
@@ -232,41 +202,48 @@ local function build_range(range)
 end
 
 local function handle_ranges(input)
-   local ranges = find_ranges(input)
-   local words  = {}
+   -- expand every range x-y of a set's content into its characters, left to right.
+   -- A '-' at either end, or next to another '-', is a literal (so a-c-e gives abc-e).
+   -- The input never goes through string.format, so it may contain '%'.
+   local n = input:len()
+   local out = {}
+   local k = 1
 
-   for i = 1, #ranges do
-      local k, s, len = build_range(ranges[i])
-      k = k - i + 1  -- fix offset when inserting %s into input
+   while k <= n do
+      local c1 = input:sub(k, k)
+      local c2 = input:sub(k + 2, k + 2)
 
-      words[i] = s
-      input = input:sub(0, k - 2) .. "%s" .. input:sub(k + 2, input:len())
+      if input:sub(k + 1, k + 1) == '-' and c1 ~= '-' and c2 ~= '' and c2 ~= '-' then
+         local _, s = build_range { k + 1, c1, c2 }
+         out[#out + 1] = s
+         k = k + 3
+      else
+         out[#out + 1] = c1
+         k = k + 1
+      end
    end
 
-   return format(input, unpack(words))
+   return table.concat(out)
 end
 
 local function handle_times(input, i)
    -- handle quantifiers like: {n}, {n,} and {n, m}
-   local j = 0
+   -- i is the index right after the '{'
+   local j = input:find("}", i, true)
    local h = 0
-   local n = input:len()
 
-   for k = i, n do
-      local c = input:sub(k, k)
+   if j == nil then
+      error("unterminated quantifier in " .. input .. ": missing '}'")
+   end
 
-      if c == ',' then
+   for k = i, j - 1 do
+      if input:sub(k, k) == ',' then
          if h == 0 then
             h = k
          else
             warning("possible bad quantifier in " .. input)
             return
          end
-      end
-
-      if c == '}' and j == 0 then
-         j = k
-         break
       end
    end
 
@@ -449,8 +426,6 @@ local function tk_backref(input)
          local token = Token(i, i, g_backref, '\\' .. k)
          token.index = k
 
-         back_list:append(token)
-
          return token
       end
    end
@@ -622,9 +597,7 @@ local function tk_groups(input)
 
    token.isGroup = true
 
-   -- for backreference
-   group_list:append(token)
-
+   -- registered for backreferences by tokenize, once the token is accepted
    return token
 end
 
@@ -679,6 +652,16 @@ local function tokenize(input, forbidden)
       
       if tok and forbidden:has(tok.type) == false then
          list:append(tok)
+
+         -- register groups and backreferences only now: a token that a rule
+         -- returned but that isn't used (e.g. tk_fix_gis probing for a group
+         -- inside a set) must not take a group number
+         if tok.isGroup then
+            group_list:append(tok)
+         elseif tok.type == g_backref then
+            back_list:append(tok)
+         end
+
          break
       end
    end
@@ -803,8 +786,9 @@ function Parser:parse()
    self.groups   = group_list
    self.backrefs = back_list
 
+   -- tokenize returns nil for an empty input (empty pattern or empty group)
    local tree = table()
-   local fifo = tokenize(self.input, table())
+   local fifo = tokenize(self.input, table()) or table()
 
    tree:append(unpack(fifo))
 
@@ -813,7 +797,7 @@ function Parser:parse()
       local ttype = token.type
       
       if not token.isSimple then
-         local tokens = tokenize(token.value, token.forbidden)
+         local tokens = tokenize(token.value, token.forbidden) or table()
          token.childs = tokens
 
          fifo:append(unpack(tokens))
@@ -877,6 +861,11 @@ local function compile_aux(token, operation)
    elseif tktype == token_or then
       -- a '|' left outside any union, e.g. the escaped '|' of ':|?'
       return nfa_char(tvalue)
+
+   elseif tktype == group or token.isGroup then
+      -- a group with no tokens: an empty group (), the root of an empty pattern,
+      -- or a backreference to an empty group. It matches only "".
+      return Nfa.emptyWord()
    end
 
    error(format("cannot compile token %s (%s)", tostring(tvalue), tostring(tktype)))

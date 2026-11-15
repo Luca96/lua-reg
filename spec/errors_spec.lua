@@ -41,7 +41,7 @@ describe("errors", function()
       end)
 
       fresh(function(Reg)
-         pcall(Reg, "a()b")  -- crashes halfway through the parse (P1-3)
+         pcall(Reg, "(a)(b){2")  -- fails halfway through the parse, after (a) is registered
          assert.is_true((Reg("abc"):matches("abc")))
          assert.is_true((Reg("(b)\1"):matches("bb")))
       end)
@@ -52,24 +52,25 @@ describe("errors", function()
       end)
    end)
 
-   it("accepts a '%' inside a set P1-1 #knownbug", function()
+   it("accepts a '%' inside a set P1-1", function()
       fresh(function(Reg)
          assert.is_true((Reg("[%]"):matches("%")))
          assert.is_true((Reg("[a%]"):matches("a")))
       end)
    end)
 
-   it("reports an unterminated quantifier instead of overflowing the stack P1-2 #knownbug", function()
+   it("reports an unterminated quantifier instead of overflowing the stack P1-2", function()
       fresh(function(Reg)
-         for _, pattern in ipairs { "[a]{2", "(a){2" } do
+         for _, pattern in ipairs { "[a]{2", "(a){2", "[a]{2,", "(a){,3" } do
             local ok, err = pcall(Reg, pattern)
-            assert.is_false(ok)
+            assert.is_false(ok, pattern)
             assert.not_matches("stack overflow", tostring(err), 1, true)
+            assert.matches("quantifier", tostring(err), 1, true)
          end
       end)
    end)
 
-   it("accepts an empty group P1-3 #knownbug", function()
+   it("accepts an empty group P1-3", function()
       fresh(function(Reg)
          assert.is_true((Reg("a()b"):matches("ab")))
       end)
@@ -90,9 +91,11 @@ describe("errors", function()
       end)
    end)
 
-   it("accepts an empty pattern P1-5 #knownbug", function()
+   it("accepts an empty pattern P1-5", function()
       fresh(function(Reg)
          assert.is_true((Reg(""):matches("")))
+         assert.is_false((Reg(""):matches("a")))
+         assert.is_true((Reg(nil):matches("")))
       end)
    end)
 
