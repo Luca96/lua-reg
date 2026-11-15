@@ -99,12 +99,77 @@ describe("errors", function()
       end)
    end)
 
-   it("rejects unbalanced parentheses and brackets P2-2 #knownbug", function()
+   it("rejects unbalanced parentheses and brackets P2-2", function()
       fresh(function(Reg)
          for _, pattern in ipairs { "(ab", "ab)", "[ab", "ab]" } do
             assert.has_error(function() Reg(pattern) end, nil, pattern)
          end
       end)
+   end)
+
+   -- each case: pattern, a phrase its error message must contain
+   local function rejects_all(cases)
+      fresh(function(Reg)
+         for _, case in ipairs(cases) do
+            local ok, err = pcall(Reg, case[1])
+            assert.is_false(ok, case[1] .. " should not compile")
+            assert.matches(case[2], tostring(err), 1, true)
+            assert.not_matches("stack overflow", tostring(err), 1, true)
+         end
+      end)
+   end
+
+   it("rejects a quantifier with nothing to repeat P3-2", function()
+      rejects_all {
+         { "*a", "nothing to repeat" }, { "+", "nothing to repeat" }, { "?x", "nothing to repeat" },
+         { "{2}", "nothing to repeat" }, { "a|*b", "nothing to repeat" }, { "(*a)", "nothing to repeat" },
+      }
+   end)
+
+   it("rejects a quantifier after a quantifier P3-2", function()
+      rejects_all {
+         { "a**", "follows another quantifier" }, { "a+*", "follows another quantifier" },
+         { "a*?", "follows another quantifier" }, { "[ab]{2}+", "follows another quantifier" },
+         { "(a)?{2}", "follows another quantifier" },
+      }
+   end)
+
+   it("rejects malformed {n,m} counts P3-2", function()
+      rejects_all {
+         { "a{1,2,3}", "bad quantifier" }, { "a{1.5}", "bad quantifier" }, { "a{x}", "bad quantifier" },
+         { "a{}", "quantifier" }, { "a{,}", "quantifier" }, { "a{-1}", "bad quantifier" },
+      }
+   end)
+
+   it("rejects stray closing brackets and an empty set P3-2", function()
+      rejects_all {
+         { "a}", "unbalanced '}'" }, { "a]", "unbalanced ']'" }, { "a)", "unbalanced ')'" },
+         { "(a))", "unbalanced ')'" }, { "[]", "empty set" }, { "[^]", "empty set" },
+         { "[a", "missing ']'" }, { "((a)", "missing ')'" },
+      }
+   end)
+
+   it("rejects a trailing escape and escaped letters or digits P3-2", function()
+      rejects_all {
+         { "a:", "ends with the escape" }, { "[a:", "ends with the escape" },
+         { ":a", "unknown escape ':a'" }, { ":5", "unknown escape ':5'" },
+         { "[:d]", "unknown escape ':d'" }, { "x:Z", "unknown escape ':Z'" },
+      }
+   end)
+
+   it("names the position of the error", function()
+      fresh(function(Reg)
+         local _, err = pcall(Reg, "ab**")
+         assert.matches("at position 4", tostring(err), 1, true)
+      end)
+   end)
+
+   it("rejects a backreference inside the group it refers to P1-7", function()
+      rejects_all {
+         { "(a\1)", "inside the group it refers to" },
+         { "((a)\1)", "inside the group it refers to" },
+         { "(a\2)(b\1)", "inside the group it refers to" },
+      }
    end)
 
    it("treats a nil subject like an empty string P3-1 #knownbug", function()

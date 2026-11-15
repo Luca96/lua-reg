@@ -26,16 +26,23 @@ busted --exclude-tags=knownbug   # skip the tests for the known issues below
 ```
 
 ## Working features:
-- quantifiers: `*, +, ?, {n}, {n, m}, {,n}, {n,}` (`{,n}` and `{0,n}` allow zero to n
-  repetitions, `{0,}` is the same as `*`)
-- sets: `[abc], [abc]+, [abc]*, [abc]?`
-- set complement: `[^abc]`
+- quantifiers on characters, sets, groups and backreferences: `*, +, ?, {n}, {n, m}, {,n}, {n,}`
+  (`{,n}` and `{0,n}` allow zero to n repetitions, `{0,}` is the same as `*`)
+- sets: `[abc], [abc]+, [abc]*, [abc]?`; inside a set only `]`, `:`, a leading `^` and a `-`
+  between two characters are special, so `[(*)]` is the set of `(`, `*` and `)`
+- set complement: `[^abc]` (any character except a, b and c)
 - ranges: `[0-9], [a-zA-Z]`
-- groups: `(abc[0-9]abc)`
-- groups inside groups: `(00(abc)*00)` 
-- group backreference: `(abc)\2(123)\1`
-- unions of expressions: `A|B`, `(A|B|C)`
-- escape reserved characters with `:` 
+- groups: `(abc[0-9]abc)`, groups inside groups: `(00(abc)*00)`, the empty group `()`
+- group backreferences `\1` to `\5`: groups are numbered by their `(` from left to right
+  (see *Limitations* for what a backreference matches)
+- unions of expressions: `A|B`, `(A|B|C)`; an alternative may be empty: `(a|)` is "a or nothing"
+- escape a special character with `:`. The special characters are `( ) [ ] { } * + ? | :`; only
+  punctuation can be escaped (`:a` and `:5` are errors, reserved for future classes like `:d`)
+- strict syntax: a malformed pattern raises an error that names the position, e.g. unbalanced
+  brackets, a quantifier with nothing to repeat (`*a`) or after another one (`a**`), a bad count
+  (`a{1,2,3}`), an empty set `[]` or a trailing `:`
+- searching with `find`, `finder`, `findall` and `split`: leftmost-longest matches, found in one
+  pass over the string (time linear in its length)
 
 ## Examples
 ```lua
@@ -68,15 +75,13 @@ print(r:matches "abazz")
 print(r:matches "abbbzz")
 
 -- group backreference
-local r = Reg "(ab(123))+\3(000)*\4\5"
+local r = Reg "(ab(123))+\1(000)*\3\2"
 print(r:matches "ab123ab123000000123")
 
--- how to backreference groups:
--- \1: refer to (ab(123))+
--- \2: refer to (000)*
--- \3: refer to (ab(123))
--- \4: refer to (000)
--- \5: refer to (123)
+-- how to backreference groups: one number per '(', from left to right
+-- \1: refer to (ab(123))
+-- \2: refer to (123)
+-- \3: refer to (000)
 
 -- unions
 local r = Reg "(aa|bb)+"
@@ -85,9 +90,9 @@ print(r:matches "bb")
 print(r:matches "bbbb")
 print(r:matches "bbaabb")
 
--- escape reserved characters with ':'
--- reserved characters are: {, }, [, ], (, ), +, *, ?, |, :
-local r = Reg "::(aa|bb|:*:+)+:[abc]"
+-- escape special characters with ':'
+-- the special characters are: {, }, [, ], (, ), +, *, ?, |, :
+local r = Reg "::(aa|bb|:*:+)+:[abc:]"
 print(r:matches ":aa*+bb[abc]")
 -----------------------------------------------------------
 -- REG MODULE
@@ -95,8 +100,10 @@ print(r:matches ":aa*+bb[abc]")
 local reg = Reg "[0-9]+"
 local input = "123, 456, 1000, 1900"
 
--- find
+-- find: the leftmost-longest match and its start index ("", 0 without a match);
+-- an optional second argument is the index to start from
 print(reg:find(input))
+print(reg:find(input, 4))
 
 -- finder
 for s, i in reg:finder(input) do
@@ -114,11 +121,16 @@ splits:eachi(print)
 ```
 
 ## Limitations
-- **Backreferences repeat the group's pattern, not the text it matched.** `([ab])\1` matches `ab`
-  as well as `aa`. Only `\1` to `\5` exist. Groups are numbered outermost first, then left to right.
+- **Backreferences are subroutine-style: they repeat the group's pattern, not the text it
+  matched.** `([ab])\1` matches `ab` as well as `aa` (like PCRE's `(?1)`; text backreferences
+  need a backtracking engine). A backreference refers to the group without its quantifier
+  (`(a)*\1` means `a*a`), can point forward (`\1(ab)`), and can't be inside the group it refers
+  to (`(a\1)` is an error: that would be recursion). Only `\1` to `\5` exist.
 - **Ranges must stay inside one class:** `0-9`, `A-Z` or `a-z`. `[!-/]` is an error, so list such
   characters one by one.
-- **`find` never reports an empty match.** `Reg"a*":find"bbb"` returns `"", 0`.
+- **Empty matches in searches** follow Lua 5.4's `string.gmatch`: `find` reports them
+  (`Reg"a*":find"bbb"` returns `"", 1`), and `findall`/`finder`/`split` skip an empty match right
+  where the previous match ended (`Reg"a*":findall"baaac"` gives `"", "aaa", ""`).
 - Matching is byte-based: a multi-byte UTF-8 character counts as several characters.
 
 ## Known issues & roadmap
@@ -138,37 +150,14 @@ Priorities:
 None open (P0-1 to P0-5 were fixed; see the changelog).
 
 ### P1: crashes and hangs
-None open (P1-1 to P1-6 were fixed; see the changelog).
+None open (P1-1 to P1-7 were fixed; see the changelog).
 
 ### P2: misparses, search, performance
-- **P2-1: The escape character stays in a set.** `[:]a]` also matches `:`.
-- **P2-2: Unbalanced `(`, `)`, `[`, `]` are matched literally** instead of raising an error.
-- **P2-3: An empty alternative turns `|` into a literal.** `(a|)` matches `a|` but not `a`. The
-  same holds for `(|a)` and `(a||b)`. Workaround: write the empty alternative as an empty group,
-  `(a|())`.
-- **P2-4: A quantifier after a backreference applies to the byte `\1`.** `(a)\1*` rejects `aa`.
-- **P2-5: Escapes don't pair up.** `:::*` should mean a literal `:` and then a literal `*`, but it
-  parses as `:` followed by `:*`.
-- **P2-6: A `)` inside a set ends the enclosing group.** `(a[)]b)` rejects `a)b`.
-- **P2-7: `{n}` quantifiers on single characters are matched literally.** `a{2}` matches the text
-  `a{2}`. Use `[a]{2}` or `(a){2}`.
-- **P2-8: `finder` never advances.** It cuts the string one character too early, so it keeps
-  returning the same match, and its indices count from the cut instead of the original string.
-- **P2-9: `find` can skip earlier matches.** When a match ends the string, `find` returns it
-  instead of an earlier one (`Reg"[0-9]+":find"a1b2"` gives `"2", 4`), and it misses one-character
-  inputs (`find"7"` gives `"", 0`). So `findall` returns matches out of order
-  (`"a1b22c333"` → `333, 1, 22`) and `split` misses split points.
-- **P2-10: Set complement accepts nothing.** `[^abc]` rejects `a`, `b` and `c`, but also every
-  other character.
-- **P2-11: Slow on long input** (no test). `find`/`findall` are O(n³): 0.6 s for 80 characters
-  without a match. `matches` recurses once per character and copies a substring each step, so
-  100,000 characters take 5 s and 300,000 run out of memory.
+None open (P2-1 to P2-11 were fixed; see the changelog).
 
 ### P3: robustness and code quality
 - **P3-1: A `nil` subject crashes.** `:matches(nil)` and `:findall(nil)` raise index errors, while
   `:find(nil)` treats `nil` as `""`.
-- **P3-2: Lenient parsing.** `*a`, `a**` and `+` are taken as literals, and `{1.5}` as `{1}`.
-  `{1,2,3}` prints a warning to stdout and is then matched literally (no test).
 - **P3-6: `add_edge` changes shared lists in place.** `concat` gives several states the same edge
   list, so `Nfa:addEdge` on one of them changes the others too.
 - **P3-7: `Nfa.new` keeps the caller's `edges`/`accepting` tables** instead of copying them, and
@@ -177,13 +166,10 @@ None open (P1-1 to P1-6 were fixed; see the changelog).
   caller's line (no test).
 
 ### Roadmap
-- Fix the known issues, P2 first.
-- Run the NFA with a loop instead of recursion (part of P2-11). `computation_of` in `nfa.lua`
-  calls itself once per character and copies the prefix with `word:sub(...)` at each level, so
-  long inputs cost O(n²) in string copying and one stack frame per character. A plain loop over
-  the string (ε-closure of the start state, then step once per byte) avoids both.
+- Fix the known issues (P3).
 - Put the modules in a namespace (`luareg.parser`, `luareg.nfa`): `parser` and `nfa` are generic
   module names that would clash once the library is installed through a rockspec.
 - A rockspec, with a `test` section so `luarocks test` runs the suite.
-- Missing regex features: the `.` wildcard, anchors (`^`, `$`), `\d`-style classes.
+- Missing regex features: the `.` wildcard (an nfa `default` edge, as `[^...]` uses), anchors
+  (`^`, `$`), `:d`-style classes (escaped letters are already reserved for them).
 - CI running busted on Lua 5.1, 5.4 and LuaJIT.

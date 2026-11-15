@@ -34,6 +34,44 @@
   - a group inside a set, like the `(a)` of `[(a)](b)\1`, no longer takes a group number, so
     `\1` refers to `(b)` instead of failing to compile (P1-6)
 - new `Nfa.emptyWord()`: an nfa that accepts only the empty string
+- new parser: a recursive-descent parser reads the pattern left to right and builds a syntax
+  tree, replacing the token rules that scanned the whole pattern. It fixes all P2 parsing issues:
+  - an escape inside a set is not part of the set: `[:]a]` is `]` or `a` (P2-1)
+  - an empty alternative works: `(a|)` is "a or nothing", and so are `(|a)`, `(a||b)`, `a|`
+    (P2-3)
+  - a backreference can be quantified: `(a)\1*` (P2-4)
+  - escapes pair up from the left: `:::*` is a literal `:` followed by a literal `*` (P2-5)
+  - a `)` inside a set doesn't close a group: `(a[)]b)` matches `a)b` (P2-6)
+  - `{n}` counts apply to single characters: `a{2}` matches `aa` (P2-7)
+- a backreference inside the group it refers to, like `(a\1)`, raises an error instead of
+  overflowing the stack (P1-7)
+- set complement works: `[^abc]` accepts every other character, also inside groups, unions and
+  repeats (P2-10). Nfa edges can have a `default` key (`Nfa.default`), taken on a character that
+  has no edge of its own; it replaces the `undeft` function
+- new search: `find(str, init)` returns the leftmost-longest match, found in one pass over the
+  string, so it no longer skips earlier matches or misses one-character inputs (P2-9). `finder`,
+  `findall` and `split` share one iteration rule: matches come in order, and `finder` returns
+  indices into the original string and ends (P2-8). New `Nfa:search(str, init)` returns the start
+  and end of the match
+- faster on long input (P2-11): `matches` loops over the characters instead of recursing (300,000
+  characters take about 1 s; it used to run out of memory), and searching is linear (`a*b` on
+  20,000 characters takes 0.1 s; `find` used to be O(n³)). New `Nfa:startStates()` and
+  `Nfa:step(states, char)`
+- **breaking: group numbering.** Groups are numbered by their `(` from left to right, as in other
+  engines, and a quantified group counts once: in `(ab(123))+(000)*`, `\1` is `(ab(123))`, `\2` is
+  `(123)` and `\3` is `(000)`. They used to be numbered outermost first, and `(a)*` took two
+  numbers (`\1` = `(a)*`, `\2` = `(a)`)
+- **breaking: strict syntax.** A malformed pattern raises an error that names the position,
+  instead of being matched literally: unbalanced `(`, `)`, `[`, `]` (P2-2), a stray `}`, a
+  quantifier with nothing to repeat (`*a`, `+`) or after another quantifier (`a**`, `a*?`), a bad
+  count (`a{1,2,3}`, `a{1.5}`, `a{x}`; no more warning printed to stdout), an empty set `[]`, a
+  trailing `:` (P3-2). Write a literal `]` as `:]`, e.g. `:[abc:]`
+- **breaking: escaped letters and digits are errors** (`:a`, `:5`), reserved for future classes
+  such as `:d`; punctuation can still be escaped
+- **breaking: empty matches are reported.** `Reg"a*":find"bbb"` returns `"", 1` (it was `"", 0`),
+  and `findall`/`finder`/`split` include empty matches, following Lua 5.4's `string.gmatch`:
+  `Reg"a*":findall"baaac"` gives `"", "aaa", ""`
+- a lone `|` matches the empty string (two empty alternatives); it used to match a literal `|`
 
 ## (0.04) 17/07/2018:
 - updated code due to luatable update

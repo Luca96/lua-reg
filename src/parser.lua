@@ -23,34 +23,37 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 --]]
 -------------------------------------------------------------------------------
-local table = require "luatable"
-local Nfa   = require "nfa"
+-- Parser: a recursive-descent parser that reads the pattern left to right and
+-- builds a syntax tree, then compiles the tree into an Nfa.
+--
+--    regex := alt <end>
+--    alt   := seq ('|' seq)*                -- a seq may be empty: (a|), |
+--    seq   := (atom quant?)*
+--    atom  := '(' alt ')' | set | ':' punct | \1 .. \5 | plain char
+--    quant := '*' | '+' | '?' | '{' n '}' | '{' n? ',' m? '}'
+--    set   := '[' '^'? item+ ']'
+--    item  := ':' punct | c '-' c | c       -- '-' at either end is literal
 -------------------------------------------------------------------------------
-local type   = type 
-local pairs  = pairs 
-local abs    = math.abs 
-local s_char = string.char 
-local format = string.format 
-local unpack = table.unpack or unpack
-local remove = table.remove
-local error_ = error 
-local assert = assert 
-local tostring = tostring 
-local tonumber = tonumber 
-local setmetatable = setmetatable 
-local getmetatable = getmetatable 
+local Nfa = require "nfa"
+-------------------------------------------------------------------------------
+local format = string.format
+local s_char = string.char
+local sub    = string.sub
+local byte   = string.byte
+local find   = string.find
+local match  = string.match
+local concat = table.concat
+local ipairs   = ipairs
+local tonumber = tonumber
+local tostring = tostring
+local setmetatable = setmetatable
+local error_ = error
 
-local err  = "\27[1;31mError: \27[0m"
-local warn = "\27[1;33mWarning: \27[0m"
-local epsilon = Nfa.epsilon
-local escape  = ':'
+local err    = "\27[1;31mError: \27[0m"
+local escape = ':'
 -------------------------------------------------------------------------------
--- errors, warnings, assertions
+-- errors
 -------------------------------------------------------------------------------
-local function warning(message)
-   print(warn .. message)
-end
-
 local function error(message)
    error_(err .. message)
 end
@@ -60,669 +63,288 @@ end
 local Parser = {}
 local parser_mt = { __index = Parser }
 
-local reserved = {
-   ['['] = true,
-   [']'] = true,     
-   ['('] = true,
-   [')'] = true,
-   ['*'] = true,
-   ['+'] = true,
-   ['?'] = true,
-   ['{'] = true,
-   ['}'] = true,
-   ['|'] = true,
-}
--------------------------------------------------------------------------------
--- Token
--------------------------------------------------------------------------------
-local Token = {}
-
-local token_mt = {
-   __index = Token,
-   
-   __tostring = function(t)
-      return format(
-         "Token (i: %d j: %d t: %s, v: %s, op: %s)", 
-         t.start, 
-         t.ends, 
-         t.type, 
-         t.value, 
-         t.operation)
-   end,
+-- characters with a meaning outside sets; escape them with ':' to match them
+local special = {
+   ['('] = true, [')'] = true, ['['] = true, [']'] = true, ['{'] = true,
+   ['}'] = true, ['*'] = true, ['+'] = true, ['?'] = true, ['|'] = true,
+   [escape] = true,
 }
 
-function Token.new(i, j, t, v, o)
--- creates a new token object
-   local self = {
-      start     = i,
-      ends      = j,
-      type      = t,
-      value     = v,
-      childs    = table(),
-      forbidden = table(),  -- not allowed childs's type
-      operation = o or '',
-   }
+local quantifier = { ['*'] = true, ['+'] = true, ['?'] = true, ['{'] = true }
 
-   return setmetatable(self, token_mt)
+-- the classes a range x-y must stay inside
+local range_intervals = {
+   { 48,  57 },  -- 0-9
+   { 65,  90 },  -- A-Z
+   { 97, 122 },  -- a-z
+}
+-------------------------------------------------------------------------------
+-- reading helpers
+-------------------------------------------------------------------------------
+function Parser:peek(offset)
+-- the character at the current position (+ offset), or "" past the end
+   local k = self.pos + (offset or 0)
+   return sub(self.input, k, k)
 end
 
-function Token:copy(other)
--- copy the content of self into other
-   for k, v in pairs(self) do
-      other[k] = v
+function Parser:fail(message, pos)
+-- raise a syntax error that names the position in the pattern
+   error(format("%s at position %d in %s", message, pos or self.pos, self.input))
+end
+
+function Parser:escaped(pos)
+-- the character after the escape at pos (checked), for ':x' outside or inside sets
+   local c = sub(self.input, pos + 1, pos + 1)
+
+   if c == "" then
+      self:fail("the pattern ends with the escape character ':'", pos)
+
+   elseif match(c, "%w") then
+      -- letters and digits are reserved for future classes such as :d
+      self:fail(format("unknown escape ':%s' (only punctuation can be escaped)", c), pos)
    end
+
+   return c
+end
+-------------------------------------------------------------------------------
+-- grammar
+-------------------------------------------------------------------------------
+function Parser:parse_alt()
+-- alt := seq ('|' seq)*
+   local items = { self:parse_seq() }
+
+   while self:peek() == '|' do
+      self.pos = self.pos + 1
+      items[#items + 1] = self:parse_seq()
+   end
+
+   if #items == 1 then
+      return items[1]
+   end
+
+   return { type = "alt", items = items }
 end
 
-Token = setmetatable(Token, 
-   { __call = function(self, ...) return Token.new(...) end })
+function Parser:parse_seq()
+-- seq := (atom quant?)*, up to a '|', a ')' or the end
+   local items = {}
 
--- for group backreference and union: filled by tk_groups and tk_backref while
--- Parser:parse runs. Each parse rebinds them to fresh tables and keeps its own
--- (self.groups, self.backrefs), so a parse or compile that fails halfway can't
--- leave stale tokens for the next one.
-local group_list = table()
-local back_list  = table()
--------------------------------------------------------------------------------
--- Token type constants 
--------------------------------------------------------------------------------
-local char      = "char"
-local char_star = "char_star"
-local char_plus = "char_plus"
-local char_opt  = "char_optional"
-local set       = "set"
-local set_star  = "set_star"
-local set_plus  = "set_plus"
-local set_comp  = "set_complement"
-local set_opt   = "set_optional"
-local set_times = "set_times"
-local group     = "group"
-local grp_star  = "group_star"
-local grp_plus  = "group_plus"
-local grp_opt   = "group_optional"
-local grp_times = "group_times"
-local g_backref = "group_backref"
-local token_or  = "token_or"
--------------------------------------------------------------------------------
--- token operation constants
--------------------------------------------------------------------------------
-local op_concat = "op_concat"
-local op_union  = "op_union"
-local op_star   = "op_star"
-local op_plus   = "op_plus"
-local op_comp   = "op_complement"
-local op_opt    = "op_optional"
-local op_times  = "op_times" 
--------------------------------------------------------------------------------
--- token forbidden types
--------------------------------------------------------------------------------
-local forb_set = table {
-   char_star, 
-   char_plus, 
-   char_opt , 
-   group    , 
-   grp_star , 
-   grp_plus , 
-   grp_opt  ,
-   g_backref
-}
--------------------------------------------------------------------------------
--- Ranges:
--------------------------------------------------------------------------------
-local range_intervals = table (
-   48,  57 ,  --0-9
-   65,  90 ,  --A-Z
-   97,  122   --a-z
-)
+   while true do
+      local c = self:peek()
 
-local function build_range(range)
-   -- transform the range into a string of characters
-   local s = ""
-   local k = range[1]
-   local i = range[2]:byte()
-   local j = range[3]:byte()
-
-   local interval = false
-
-   for i1, i2 in range_intervals:group(2) do
-      if i >= i1 and j <= i2 then
-         interval = true
+      if c == "" or c == '|' or c == ')' then
          break
       end
-   end
 
-   if j < i or interval == false then
-      error(format("Invalid range %s-%s at position %d", range[2], range[3], k))
-   end
+      local node = self:parse_atom()
 
-   for k = i, j do
-      s = s .. s_char(k)
-   end
+      if quantifier[self:peek()] then
+         node = self:parse_quant(node)
 
-   return k, s, s:len()
-end
-
-local function handle_ranges(input)
-   -- expand every range x-y of a set's content into its characters, left to right.
-   -- A '-' at either end, or next to another '-', is a literal (so a-c-e gives abc-e).
-   -- The input never goes through string.format, so it may contain '%'.
-   local n = input:len()
-   local out = {}
-   local k = 1
-
-   while k <= n do
-      local c1 = input:sub(k, k)
-      local c2 = input:sub(k + 2, k + 2)
-
-      if input:sub(k + 1, k + 1) == '-' and c1 ~= '-' and c2 ~= '' and c2 ~= '-' then
-         local _, s = build_range { k + 1, c1, c2 }
-         out[#out + 1] = s
-         k = k + 3
-      else
-         out[#out + 1] = c1
-         k = k + 1
-      end
-   end
-
-   return table.concat(out)
-end
-
-local function handle_times(input, i)
-   -- handle quantifiers like: {n}, {n,} and {n, m}
-   -- i is the index right after the '{'
-   local j = input:find("}", i, true)
-   local h = 0
-
-   if j == nil then
-      error("unterminated quantifier in " .. input .. ": missing '}'")
-   end
-
-   for k = i, j - 1 do
-      if input:sub(k, k) == ',' then
-         if h == 0 then
-            h = k
-         else
-            warning("possible bad quantifier in " .. input)
-            return
-         end
-      end
-   end
-
-   local d = j - i + 1
-
-   if h == 0 then
-      -- no comma (1 number)
-      local n = tonumber(input:sub(i, j - 1))
-
-      if n == nil then
-         error("for quantifier {n} in " .. input .. ", n must be specified!")
-
-      elseif n <= 0 then
-         error("bad number for quantifier {n} in " .. input .. ", n must be > 0!")
-      end
-
-      return n, n, d
-
-   else
-      -- comma and 2 numbers
-      local n = tonumber(input:sub(i, h - 1))
-      local m = tonumber(input:sub(h + 1, j - 1))
-
-      if n == nil and m == nil then
-         error("for quantifier {n, m} in " .. input .. ", specify at least n or m")
-      end
-
-      -- {,m} means {0,m}
-      n = n or 0
-
-      if n < 0 then
-         error("bad number for quantifier {n, m} in " .. input .. ", n must be >= 0!")
-      end
-
-      if m then
-         if m <= 0 then
-            error("bad number for quantifier {n, m} in " .. input .. ", m must be > 0!")
-
-         elseif m < n then
-            error("bad numbers for quantifier {n, m} in " .. input .. ", n must be <= m!")
+         if quantifier[self:peek()] then
+            self:fail(format("quantifier '%s' follows another quantifier", self:peek()))
          end
       end
 
-      return n, m, d
-   end
-end
-
-local function handle_or(group)
-   -- check if group contains some balanced unions
-   local tokens = group.childs
-   local size = #tokens
-   local list = {}
-   local k = 1
-
-   for i = 1, size do
-      local tok = tokens[i]
-
-      if tok.type == token_or then
-         -- check if prev and next tokens are not token_or
-         if i == 1 or i == size then
-            return {}         
-         else
-            local prev = tokens[i - 1]
-            local next = tokens[i + 1]
-
-            if prev.type == token_or or next.type == token_or then
-               return {}
-            else
-               list[k] = i
-               k = k + 1
-            end
-         end   
-      end
+      items[#items + 1] = node
    end
 
-   return list 
+   return { type = "seq", items = items }
 end
--------------------------------------------------------------------------------
--- Tokens definitions
--------------------------------------------------------------------------------
-local function tk_char(input)
-   local len = input:len()
-   local tok = nil
 
-   if len == 1 then
-      tok = Token(1, 1, char, input:sub(1, 1))
-      tok.isSimple = true
+function Parser:parse_atom()
+   local c   = self:peek()
+   local pos = self.pos
 
-      return tok
+   if c == '(' then
+      return self:parse_group()
 
-   elseif len >= 2 then
-      local c1 = input:sub(1, 1)
-      local c2 = input:sub(2, 2)
+   elseif c == '[' then
+      return self:parse_set()
 
-      if c1 == escape then
-         tok = Token(1, 2, char, c2)
-      else
-         tok = Token(1, 1, char, c1)
-      end
+   elseif c == escape then
+      local x = self:escaped(pos)
+      self.pos = pos + 2
+      return { type = "char", char = x }
 
-      tok.isSimple = true
+   elseif quantifier[c] then
+      self:fail(format("quantifier '%s' has nothing to repeat", c))
 
-      return tok
+   elseif c == ']' or c == '}' then
+      self:fail(format("unbalanced '%s'", c))
    end
+
+   local b = byte(c)
+
+   if b >= 1 and b <= 5 then
+      -- \1 .. \5 in the Lua string: a group backreference
+      self.pos = pos + 1
+      local node = { type = "backref", index = b, pos = pos }
+      self.backrefs[#self.backrefs + 1] = node
+      return node
+   end
+
+   self.pos = pos + 1
+   return { type = "char", char = c }
 end
 
-local function tk_chars(input)
-   local len = input:len()
-   local snd = nil
-   local trd = nil
+function Parser:parse_group()
+-- '(' alt ')'; groups are numbered by their '(' from left to right
+   local open = self.pos
+   self.ngroups = self.ngroups + 1
 
-   for k = 1, len do
-      local c = input:sub(k, k)
+   local node = { type = "group", index = self.ngroups }
+   self.groups[node.index] = node
 
-      if (c == '*' or c == '+' or c == '?') and snd then
-         -- handle escaped characters
-         if trd == escape then
-            local tk_value = input:sub(k - 1, k - 1)
+   self.pos = open + 1
+   node.body = self:parse_alt()
 
-            -- determine token type
-            if c == '*' then
-               local token = Token(k - 2, k, char_star, tk_value)
-               token.isSimple = true
-               return token
+   if self:peek() ~= ')' then
+      self:fail("unbalanced '(': missing ')'", open)
+   end
 
-            elseif c == '+' then
-               local token = Token(k - 2, k, char_plus, tk_value)
-               token.isSimple = true
-               return token
-            else
-               return Token(k - 2, k, char_opt, tk_value, op_opt)
-            end
+   self.pos = self.pos + 1
+   return node
+end
 
-         elseif snd ~= escape and not reserved[snd] then
-            k = k - 1
-            local tk_value = input:sub(k, k)
+local function expand_range(parser, c1, c2, pos)
+-- the characters c1..c2, if both are in the same class (0-9, A-Z or a-z)
+   local i, j = byte(c1), byte(c2)
 
-            -- determine token type
-            if c == '*' then
-               local token = Token(k, k + 1, char_star, tk_value)
-               token.isSimple = true
-               return token
+   for _, interval in ipairs(range_intervals) do
+      if i >= interval[1] and j <= interval[2] and i <= j then
+         local s = {}
 
-            elseif c == '+' then
-               local token = Token(k, k + 1, char_plus, tk_value)
-               token.isSimple = true
-               return token
-            else
-               return Token(k, k + 1, char_opt, tk_value, op_opt)
-            end
+         for k = i, j do
+            s[#s + 1] = s_char(k)
          end
-      end
 
-      -- keep track of 2nd and trd char behind c
-      trd = snd
-      snd = c
-   end
-end
-
-local function tk_backref(input)
-   local n = input:len()
-
-   for i = 1, n do
-      local c = input:sub(i, i)
-      local k = nil
-
-      if c == '\1' then
-         k = 1
-      elseif c == '\2' then
-         k = 2
-      elseif c == '\3' then
-         k = 3
-      elseif c == '\4' then
-         k = 4
-      elseif c == '\5' then
-         k = 5
-      end
-
-      if k then
-         local token = Token(i, i, g_backref, '\\' .. k)
-         token.index = k
-
-         return token
+         return concat(s)
       end
    end
+
+   parser:fail(format("Invalid range %s-%s", c1, c2), pos)
 end
 
-local function tk_sets(input)
-   local len  = input:len()
-   local snd  = nil 
-   local trd  = nil
-   local i, j = 0, 0
+function Parser:parse_set()
+-- '[' '^'? item+ ']'. Inside a set only ']', ':', a leading '^' and a '-'
+-- between two characters are special: [(*)] is the set of '(', '*' and ')'.
+   local open = self.pos
+   local negate = false
+   local chars = {}
 
-   for k = 1, len do
-      local c = input:sub(k, k)
+   self.pos = open + 1
 
-      if c == '[' and i == 0 then
-         -- handle escaped chars
-         if snd ~= escape or trd == escape then
-            i = k
-         end
+   if self:peek() == '^' then
+      negate = true
+      self.pos = self.pos + 1
+   end
+
+   while true do
+      local c   = self:peek()
+      local pos = self.pos
+
+      if c == "" then
+         self:fail("unbalanced '[': missing ']'", open)
 
       elseif c == ']' then
-         -- handle escaped chars
-         if snd ~= escape or trd == escape then
-            j = k
-            break
-         end
-      end
-
-      -- keep track of 2nd and trd char behind c
-      trd = snd
-      snd = c
-   end
-
-   if i == 0 or j == 0 or i >= j then
-      return nil
-   end
-
-   -- determine set type
-   local k = j + 1 
-   local ends  = input:sub(k, k)
-   local token = nil 
-
-   -- set star:
-   if ends == '*' then
-      token = Token(i, k, set_star, input:sub(i, j), op_star)
-      token.forbidden = forb_set 
-
-   -- set plus:
-   elseif ends == "+" then
-      token = Token(i, k, set_plus, input:sub(i, j), op_plus)
-      token.forbidden = forb_set
-
-   -- set opt:
-   elseif ends == "?" then
-      token = Token(i, k, set_opt, input:sub(i, j), op_opt)
-      token.forbidden = forb_set
-
-   -- set times:
-   elseif ends == "{" then 
-      token = Token(i, j, set, nil)
-      local n, m, d = handle_times(input, k + 1)
-
-      if n or m then
-         token.min = n
-         token.max = m
-         token.ends = k + d
-         token.value = input:sub(i, j) 
-         token.type  = set_times
-         token.operation = op_times
-      else
-         token.value = handle_ranges(input:sub(i + 1, j - 1))
-         token.isSimple = true
-      end
-
-   -- set complement:
-   elseif input:sub(i + 1, i + 1) == '^' then
-      token = Token(i, j, set, handle_ranges(input:sub(i + 2, j - 1)))
-      token.negate = true
-      token.isSimple = true 
-
-   -- set:
-   else
-      token = Token(i, j, set, handle_ranges(input:sub(i + 1, j - 1)))
-      token.isSimple = true
-   end
-
-   return token
-end
-
-local function tk_groups(input)
-   local len  = input:len()
-   local snd  = nil 
-   local trd  = nil
-   local i, j = 0, 0
-   local h = 0
-
-   for k = 1, len do
-      local c = input:sub(k, k)
-
-      if c == '(' then
-         -- handle escaped chars
-         if snd ~= escape or trd == escape then
-            h = h + 1
-
-            if i == 0 then
-               i = k
-            end
+         if #chars == 0 then
+            self:fail("empty set (write a literal ']' as ':]')", open)
          end
 
-      elseif c == ')' then
-         -- handle escaped chars
-         if snd ~= escape or trd == escape then
-            h = h - 1
-
-            if h == 0 then
-               -- parenthesis are balanced (group is valid)
-               j = k
-               break
-            end
-         end
-      end
-
-      -- keep track of 2nd and trd char behind c
-      trd = snd
-      snd = c
-   end
-
-   if i == 0 or j == 0 or i >= j then
-      return nil
-   end
-
-   -- determine group type
-   local k = j + 1
-   local ends  = input:sub(k, k)
-   local token = nil
-
-   -- group star:
-   if ends == '*' then
-      token = Token(i, k, grp_star, input:sub(i, j), op_star) 
-
-   -- group plus:
-   elseif ends == '+' then
-      token = Token(i, k, grp_plus, input:sub(i, j), op_plus)
-
-   -- group opt:
-   elseif ends == '?' then
-      token = Token(i, k, grp_opt, input:sub(i, j), op_opt)
-
-   -- group times:
-   elseif ends == "{" then
-      token = Token(i, j, group, nil, op_concat)
-      local n, m, d = handle_times(input, k + 1)
-
-      if n or m then
-         token.min = n
-         token.max = m
-         token.ends = k + d
-         token.value = input:sub(i, j) 
-         token.type  = grp_times
-         token.operation = op_times
-      else
-         token.value = input:sub(i + 1, j - 1)
-      end
-
-   -- group:
-   else
-      token = Token(i, j, group, input:sub(i + 1, j - 1), op_concat)
-   end
-
-   token.isGroup = true
-
-   -- registered for backreferences by tokenize, once the token is accepted
-   return token
-end
-
-local function tk_fix_gis(input)
-   -- rules for fixing groups inside a set
-   local tokset = tk_sets(input)
-
-   if tokset then
-      local subinput = input:sub(tokset.start + 1, tokset.ends - 1)
-      local tokgroup = tk_groups(subinput)
-
-      if tokgroup then
-         return tokset
-      end
-   end
-end
-
-local function tk_or(input)
-   local c = input:sub(1, 1)
-   
-   if c == '|' then
-      local token = Token(1, 1, token_or, c)
-      token.isSimple = true
-
-      return token
-   end
-end
-
-local Tokens = {
-   tk_fix_gis,
-   tk_groups,
-   tk_sets,
-   tk_or,
-   tk_chars,
-   tk_backref,
-   tk_char,
-}
--------------------------------------------------------------------------------
--- tokenizer
--------------------------------------------------------------------------------
-local function tokenize(input, forbidden)
-   local list = table()
-   local len  = input:len() 
-   local tok  = nil
-
-   if len == 0 then
-      return nil
-   end
-
-   for i = 1, #Tokens do
-      tok = Tokens[i](input)
-      
-      if tok and forbidden:has(tok.type) == false then
-         list:append(tok)
-
-         -- register groups and backreferences only now: a token that a rule
-         -- returned but that isn't used (e.g. tk_fix_gis probing for a group
-         -- inside a set) must not take a group number
-         if tok.isGroup then
-            group_list:append(tok)
-         elseif tok.type == g_backref then
-            back_list:append(tok)
-         end
-
+         self.pos = pos + 1
          break
+
+      elseif c == escape then
+         chars[#chars + 1] = self:escaped(pos)
+         self.pos = pos + 2
+
+      else
+         local c2 = self:peek(2)
+
+         if self:peek(1) == '-' and c ~= '-' and c2 ~= '-' and c2 ~= ']' and c2 ~= "" then
+            chars[#chars + 1] = expand_range(self, c, c2, pos + 1)
+            self.pos = pos + 3
+         else
+            chars[#chars + 1] = c
+            self.pos = pos + 1
+         end
       end
    end
 
-   if tok then
-      local i = tok.start - 1
-      local j = tok.ends  + 1
+   return { type = "set", chars = concat(chars), negate = negate }
+end
 
-      local before = tokenize(input:sub(1, i), forbidden)
-      local after  = tokenize(input:sub(j, len), forbidden)
+function Parser:parse_quant(node)
+-- wrap node in a repeat: * + ? {n} {n,} {,m} {n,m}
+   local c = self:peek()
+   local pos = self.pos
 
-      if before then
-         list:push(unpack(before))
+   if c ~= '{' then
+      self.pos = pos + 1
+
+      if c == '*' then
+         return { type = "repeat", node = node, min = 0 }
+      elseif c == '+' then
+         return { type = "repeat", node = node, min = 1 }
       end
 
-      if after then
-         list:append(unpack(after))
+      return { type = "repeat", node = node, min = 0, max = 1 }
+   end
+
+   local input = self.input
+   local close = find(input, "}", pos + 1, true)
+
+   if close == nil then
+      self:fail("unterminated quantifier: missing '}'", pos)
+   end
+
+   local text = sub(input, pos, close)
+   local body = sub(input, pos + 1, close - 1)
+   local n, comma, m = match(body, "^%s*(%d*)%s*(,?)%s*(%d*)%s*$")
+
+   if n == nil then
+      self:fail(format("bad quantifier %s (expected {n}, {n,}, {,m} or {n,m})", text), pos)
+   end
+
+   n, m = tonumber(n), tonumber(m)
+
+   if comma == "" then
+      -- {n}
+      if n == nil then
+         self:fail(format("bad quantifier %s: n must be specified", text), pos)
+      elseif n <= 0 then
+         self:fail(format("bad quantifier %s: n must be > 0", text), pos)
+      end
+
+      m = n
+   else
+      -- {n,} {,m} {n,m}
+      if n == nil and m == nil then
+         self:fail(format("bad quantifier %s: specify at least n or m", text), pos)
+      end
+
+      n = n or 0
+
+      if m and m <= 0 then
+         self:fail(format("bad quantifier %s: m must be > 0", text), pos)
+      elseif m and m < n then
+         self:fail(format("bad quantifier %s: n must be <= m", text), pos)
       end
    end
 
-   return list
+   self.pos = close + 1
+   return { type = "repeat", node = node, min = n, max = m }
 end
 -------------------------------------------------------------------------------
 -- Builders for basic nfa
 -------------------------------------------------------------------------------
 local function nfa_char(char)
    -- build an nfa that recognize a single character
-
    return Nfa {
       states = 2,
-      edges  = {
-         [1] = { [char] = { 2 } },
-      },
-
-      accepting = { 2 }
-   }
-end
-
-local function nfa_char_star(char)
-   -- build an nfa that recognize char*
-
-   return Nfa {
-      states = 1,
-      edges  = { 
-         [1] = { [char] = { 1 } }
-      },
-      
-      accepting = { 1 } 
-   }
-end
-
-local function nfa_char_plus(char)
-   -- build an nfa that recognize char+
-
-   return Nfa {
-      states = 2,
-      edges  = { 
-         [1] = { [char] = { 2 } },
-         [2] = { [char] = { 2 } },
-      },
-      accepting = { 2 } 
+      edges  = { [1] = { [char] = { 2 } } },
+      accepting = { 2 },
    }
 end
 
@@ -758,183 +380,105 @@ function Parser.new(input)
 end
 
 function Parser:parse()
--- build the parse tree (needed by Parse.compile)
-   group_list = table()
-   back_list  = table()
-   self.groups   = group_list
-   self.backrefs = back_list
+-- build the syntax tree (needed by Parser:compile)
+   self.pos      = 1
+   self.ngroups  = 0
+   self.groups   = {}
+   self.backrefs = {}
 
-   -- tokenize returns nil for an empty input (empty pattern or empty group)
-   local tree = table()
-   local fifo = tokenize(self.input, table()) or table()
+   local tree = self:parse_alt()
 
-   tree:append(unpack(fifo))
+   if self.pos <= #self.input then
+      -- parse_alt only stops early at a ')' that closes no group
+      self:fail("unbalanced ')'")
+   end
 
-   while not fifo:empty() do
-      local token = fifo:head()
-      local ttype = token.type
-      
-      if not token.isSimple then
-         local tokens = tokenize(token.value, token.forbidden) or table()
-         token.childs = tokens
+   for i = 1, #self.backrefs do
+      local ref = self.backrefs[i]
 
-         fifo:append(unpack(tokens))
+      if self.groups[ref.index] == nil then
+         self:fail("wrong group-backreference for group index: " .. ref.index, ref.pos)
       end
    end
 
    self.tree = tree
 end
 
-local function compile_aux(token, operation)
-   -- print(token, operation)
+local function compile(self, node)
+   local t = node.type
 
-   local childs = token.childs
-   local tktype = token.type
-   local tvalue = token.value
+   if t == "char" then
+      return nfa_char(node.char)
 
-   if not childs:empty() then
-      local m1 = Nfa.new()
+   elseif t == "set" then
+      return nfa_set(node.chars, node.negate)
 
-      childs:eachi(function(tok)
-         local m2 = compile_aux(tok, tok.operation)
+   elseif t == "seq" then
+      local items = node.items
 
-         -- build nfa from complex tokens
-         if op_concat == operation then
-            m1 = m1 .. m2
-
-         elseif op_star == operation then
-            m1 = m2:star()
-
-         elseif op_plus == operation then
-            m1 = m2:plus()
-
-         elseif op_opt == operation then
-            m1 = m2:optional()  
-
-         elseif op_union == operation then
-            m1 = m1 + m2
-
-         elseif op_times == operation then
-            m1 = m2:times(token.min, token.max)
-         end
-      end)
-
-      return m1
-   end
-   
-   -- build basic nfa from a simple token
-   if tktype == char then
-      return nfa_char(tvalue)
-
-   elseif tktype == char_star then
-      return nfa_char_star(tvalue)
-
-   elseif tktype == char_plus then
-      return nfa_char_plus(tvalue)
-
-   elseif tktype == set then
-      -- consider set-complement
-      return nfa_set(tvalue, token.negate)
-
-   elseif tktype == token_or then
-      -- a '|' left outside any union, e.g. the escaped '|' of ':|?'
-      return nfa_char(tvalue)
-
-   elseif tktype == group or token.isGroup then
-      -- a group with no tokens: an empty group (), the root of an empty pattern,
-      -- or a backreference to an empty group. It matches only "".
-      return Nfa.emptyWord()
-   end
-
-   error(format("cannot compile token %s (%s)", tostring(tvalue), tostring(tktype)))
-end
-
-local function split_unions(group)
-   -- rebuild group.childs as a union when it contains balanced '|' tokens
-   local index  = handle_or(group)
-   local size   = #index
-   local childs = group.childs
-
-   if size > 0 then
-      -- group contains unions, so:
-      group.operation = op_union
-
-      local root = table()
-      local c = 1
-
-      size = size + 1
-      index[size] = #childs + 1
-
-      -- rebuilt group.childs by adding tokens between '|'
-      for k = 1, size do
-         local t = table()
-         local j = index[k] - 1
-
-         -- token info
-         local v = ""
-
-         for h = c, j do
-            local tok = childs[h]
-            v = v .. tok.value
-            t:append(tok)
-         end
-
-         c = j + 2
-
-         -- this will make parser concatenate tokens between '|'
-         local token  = Token(0, 0, token_or, v, op_concat)
-         token.childs = t
-
-         root:append(token)
+      if #items == 0 then
+         return Nfa.emptyWord()
       end
 
-      --
-      group.childs = root
+      local m = Nfa.new()
 
-   else
-      -- threat the '|' token as char token
-      for i = 1, #childs do
-         local tok = childs[i]
-
-         if tok.type == token_or then
-            tok.type = char
-         end
+      for i = 1, #items do
+         m = m .. compile(self, items[i])
       end
-   end
-end
 
-local function resolve_backrefs(groups, backrefs)
-   -- replace backref. tokens with referenced groups
-   for i = 1, #backrefs do
-      local token = backrefs[i]
-      local index = token.index
-      local group = groups[index]
+      return m
 
-      if group == nil then
-         error("wrong group-backreference for group index: " .. index)
-      else
-         group:copy(token)
-         token.type = g_backref .. index
+   elseif t == "alt" then
+      local m = Nfa.new()
+
+      for i = 1, #node.items do
+         m = m + compile(self, node.items[i])
       end
+
+      return m
+
+   elseif t == "repeat" then
+      local m = compile(self, node.node)
+      local x, y = node.min, node.max
+
+      if x == 0 and y == nil then
+         return m:star()
+      elseif x == 1 and y == nil then
+         return m:plus()
+      elseif x == 0 and y == 1 then
+         return m:optional()
+      end
+
+      return m:times(x, y)
+
+   elseif t == "group" then
+      local index = node.index
+
+      if self.expanding[index] then
+         -- a backreference inside the group it refers to: that is recursion,
+         -- which a finite automaton can't express
+         error(format("group-backreference \\%d is inside the group it refers to "
+            .. "(recursion is not supported) in %s", index, self.input))
+      end
+
+      self.expanding[index] = true
+      local m = compile(self, node.body)
+      self.expanding[index] = nil
+
+      return m
+
+   elseif t == "backref" then
+      -- a backreference repeats the group's pattern (not the text it matched)
+      return compile(self, self.groups[node.index])
    end
+
+   error(format("cannot compile node %s", tostring(t)))
 end
 
 function Parser:compile()
--- build an nfa from a tree-of-tokens
-   -- the top-level tokens act as an (unnumbered) group, so that top-level unions
-   -- like a|b are split the same way as (a|b)
-   local root = Token(0, 0, group, self.input, op_concat)
-   root.childs = self.tree
-
-   split_unions(root)
-
-   for i = 1, #self.groups do
-      split_unions(self.groups[i])
-   end
-
-   resolve_backrefs(self.groups, self.backrefs)
-
-   return compile_aux(root, root.operation)
+-- build an nfa from the syntax tree
+   self.expanding = {}
+   return compile(self, self.tree)
 end
 -------------------------------------------------------------------------------
 return Parser
