@@ -1,29 +1,51 @@
-# Lua-Reg 0.04
-A Regular Expression Engine for Lua. 
+# Lua-Reg 0.5.0
+A Regular Expression Engine for Lua: patterns are compiled to an NFA and matched in time linear
+in the length of the string.
 
-## Warning!
-Currently the module is `under development`, so it is:
-- __unfinished__
-- __unoptimized__
-- __unstable__
-- __untested__
+Lua-Reg is still before 1.0, so its API may change between minor versions (each change is listed
+in the changelog). It is tested on Lua 5.4. The code avoids features that only exist in newer
+versions, but it hasn't been tested on Lua 5.1 – 5.3 or LuaJIT yet.
 
 ## Changes
-View the `changelog` for more info about changes.
+View the `changelog` for more info about changes. Coming from 0.04? See
+[Upgrading from 0.04](#upgrading-from-004).
 
 ## Installation
 To install the library just `clone` the repo and install [LuaTable](https://github.com/Luca96/lua-table#installation).
+Then add the repo's `src` folder to `package.path` (`src/?.lua`): `require "luareg"` loads
+`src/luareg.lua`, which loads its parts `luareg.parser` and `luareg.nfa` from `src/luareg/`.
+
+## Running the tests
+The test suite uses [busted](https://lunarmodules.github.io/busted/) (`luarocks install busted`).
+It expects [lua-table](https://github.com/Luca96/lua-table) to be checked out next to lua-reg
+(`../lua-table`). From the repository root:
+
+```
+busted                           # whole suite
+busted --exclude-tags=knownbug   # skip tests tagged #knownbug (tests of open known issues)
+```
 
 ## Working features:
-- quantifiers: `*, +, ?, {n}, {n, m}, {,n}, {n,}` 
-- sets: `[abc], [abc]+, [abc]*, [abc]?`
-- set complement: `[^abc]`
+- quantifiers on characters, sets, groups and backreferences: `*, +, ?, {n}, {n, m}, {,n}, {n,}`
+  (`{,n}` and `{0,n}` allow zero to n repetitions, `{0,}` is the same as `*`)
+- sets: `[abc], [abc]+, [abc]*, [abc]?`; inside a set only `]`, `:`, a leading `^` and a `-`
+  between two characters are special, so `[(*)]` is the set of `(`, `*` and `)`
+- set complement: `[^abc]` (any character except a, b and c)
 - ranges: `[0-9], [a-zA-Z]`
-- groups: `(abc[0-9]abc)`
-- groups inside groups: `(00(abc)*00)` 
-- group backreference: `(abc)\2(123)\1`
-- unions of expressions: `(A|B|C)`
-- escape reserved characters with `:` 
+- groups: `(abc[0-9]abc)`, groups inside groups: `(00(abc)*00)`, the empty group `()`
+- group backreferences `\1` to `\5`: groups are numbered by their `(` from left to right
+  (see *Limitations* for what a backreference matches)
+- unions of expressions: `A|B`, `(A|B|C)`; an alternative may be empty: `(a|)` is "a or nothing"
+- escape a special character with `:`. The special characters are `( ) [ ] { } * + ? | :`; only
+  punctuation can be escaped (`:a` and `:5` are errors, reserved for future classes like `:d`)
+- strict syntax: a malformed pattern raises an error that names the position, e.g. unbalanced
+  brackets, a quantifier with nothing to repeat (`*a`) or after another one (`a**`), a bad count
+  (`a{1,2,3}`), an empty set `[]` or a trailing `:`
+- searching with `find`, `finder`, `findall` and `split`: leftmost-longest matches, found in one
+  pass over the string (time linear in its length)
+- arguments work like Lua's string functions: a `nil` subject is `""`, a number is turned into a
+  string, and any other type raises a *bad argument* error. Errors, syntax errors included, are
+  plain messages that point at the line that called lua-reg
 
 ## Examples
 ```lua
@@ -34,7 +56,7 @@ local r = Reg "[a-zA-Z]+ [0-9]+"
 print(r:matches "August 19")
 print(r:matches "June 4")
 
-local r = Reg "[0-9]?[0-9]:[0-9][0-9]"
+local r = Reg "[0-9]?[0-9]::[0-9][0-9]"  -- ':' is the escape character, so '::' is a literal ':'
 print(r:matches "10:20")
 print(r:matches "1:00")
 
@@ -56,15 +78,13 @@ print(r:matches "abazz")
 print(r:matches "abbbzz")
 
 -- group backreference
-local r = Reg "(ab(123))+\3(000)*\4\5"
-print(r:matches "ab123000ab123123")
+local r = Reg "(ab(123))+\1(000)*\3\2"
+print(r:matches "ab123ab123000000123")
 
--- how to backreference groups:
--- \1: refer to (ab(123))+
--- \2: refer to (000)*
--- \3: refer to (ab(123))
--- \4: refer to (000)
--- \5: refer to (123)
+-- how to backreference groups: one number per '(', from left to right
+-- \1: refer to (ab(123))
+-- \2: refer to (123)
+-- \3: refer to (000)
 
 -- unions
 local r = Reg "(aa|bb)+"
@@ -73,9 +93,9 @@ print(r:matches "bb")
 print(r:matches "bbbb")
 print(r:matches "bbaabb")
 
--- escape reserved characters with ':'
--- reserved characters are: {, }, [, ], (, ), +, *, ?, |, :
-local r = Reg "::(aa|bb|:*:+)+:[abc]"
+-- escape special characters with ':'
+-- the special characters are: {, }, [, ], (, ), +, *, ?, |, :
+local r = Reg "::(aa|bb|:*:+)+:[abc:]"
 print(r:matches ":aa*+bb[abc]")
 -----------------------------------------------------------
 -- REG MODULE
@@ -83,8 +103,10 @@ print(r:matches ":aa*+bb[abc]")
 local reg = Reg "[0-9]+"
 local input = "123, 456, 1000, 1900"
 
--- find
+-- find: the leftmost-longest match and its start index ("", 0 without a match);
+-- an optional second argument is the index to start from (negative: from the end)
 print(reg:find(input))
+print(reg:find(input, 4))
 
 -- finder
 for s, i in reg:finder(input) do
@@ -100,3 +122,38 @@ local splits = reg:split(input, true)
 splits:eachi(print)
 
 ```
+
+## Limitations
+- **Backreferences are subroutine-style: they repeat the group's pattern, not the text it
+  matched.** `([ab])\1` matches `ab` as well as `aa` (like PCRE's `(?1)`; text backreferences
+  need a backtracking engine). A backreference refers to the group without its quantifier
+  (`(a)*\1` means `a*a`), can point forward (`\1(ab)`), and can't be inside the group it refers
+  to (`(a\1)` is an error: that would be recursion). Only `\1` to `\5` exist.
+- **Ranges must stay inside one class:** `0-9`, `A-Z` or `a-z`. `[!-/]` is an error, so list such
+  characters one by one.
+- **Empty matches in searches** follow Lua 5.4's `string.gmatch`: `find` reports them
+  (`Reg"a*":find"bbb"` returns `"", 1`), and `findall`/`finder`/`split` skip an empty match right
+  where the previous match ended (`Reg"a*":findall"baaac"` gives `"", "aaa", ""`).
+- Matching is byte-based: a multi-byte UTF-8 character counts as several characters.
+
+## Upgrading from 0.04
+0.5.0 changes how some patterns and searches behave (details in the changelog):
+- **Group numbers** follow the `(` from left to right, and a quantified group counts once:
+  renumber `\1` .. `\5` in patterns written for 0.04.
+- **Malformed patterns raise errors** instead of being matched literally: escape literal
+  brackets, quantifiers and `|` with `:`, and write a literal `]` as `:]`.
+- **Escaped letters and digits** (`:a`, `:5`) are errors; only punctuation can be escaped.
+- **`{,n}`** allows 0 to n repetitions (it was 1 to n): write `{1,n}` for the old meaning.
+- **Empty matches are reported**: `find` returns `"", 1` for `Reg"a*":find"bbb"` (it was `"", 0`),
+  and `findall`, `finder` and `split` include empty matches. Test for a match with
+  `i > 0`, as before.
+- **A negative `init`** in `find(str, init)` counts from the end of the string.
+- **Modules:** `require "luareg"` is unchanged, but `require "nfa"` is now
+  `require "luareg.nfa"`.
+
+## Roadmap
+No known issues are open. Still missing:
+- a rockspec, with a `test` section so `luarocks test` runs the suite;
+- regex features: the `.` wildcard (an nfa `default` edge, as `[^...]` uses), anchors (`^`, `$`),
+  and `:d`-style classes (escaped letters are already reserved for them);
+- CI running busted on Lua 5.1, 5.2, 5.3, 5.4 and LuaJIT (only 5.4 is tested so far).
