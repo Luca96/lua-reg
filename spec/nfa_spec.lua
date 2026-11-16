@@ -304,16 +304,60 @@ describe("Nfa", function()
          end
       end)
 
-      it("times builds exactly the nfa of the chained version", function()
+      it("times builds exactly the nfa of the chained version for {x,} and {x}", function()
          for _, m in ipairs(bases()) do
             for x = 0, 3 do
                assert.are.same(shape(times_chained(m, x)), shape(m:times(x)))
+               assert.are.same(shape(times_chained(m, x, x)), shape(m:times(x, x)))
+            end
+         end
+      end)
 
-               for y = x, x + 3 do
-                  assert.are.same(shape(times_chained(m, x, y)), shape(m:times(x, y)))
+      it("times accepts the language of the chained version for {x,y} P2-13", function()
+         -- {x,y} with y > x is no longer a chain of optional() copies (see the next
+         -- test), so compare languages: every word over {a, b} up to length 6
+         for _, m in ipairs(bases()) do
+            for x = 0, 3 do
+               for y = x + 1, x + 3 do
+                  local chained, built = times_chained(m, x, y), m:times(x, y)
+
+                  assert.are.same(accepted(chained, long_words), accepted(built, long_words))
+                  -- y plain copies (and a start state that accepts "" when x = 0)
+                  assert.are.equal(y * m.numStates + (x == 0 and 1 or 0), built.numStates)
+                  assert.is_true(built.numStates < chained.numStates)
                end
             end
          end
+      end)
+
+      it("{x,y} keeps the active states few while matching P2-13", function()
+         -- the most states active after reading each character of the word
+         local function most_active(m, word)
+            local states, most = m:startStates(), 0
+
+            for i = 1, #word do
+               states = m:step(states, word:sub(i, i))
+               most = math.max(most, #states)
+            end
+
+            return most
+         end
+
+         local word = ("a"):rep(300)
+         local late_a = Nfa { edges = { [3] = { a = { 2 } } }, accepting = { 2 }, start = 3 }
+
+         for _, m in ipairs { char "a", char "a" + char "b", late_a } do
+            for _, x in ipairs { 0, 1, 2 } do
+               local built = m:times(x, 300)
+
+               assert.is_true((built:compute(word)))
+               assert.is_false((built:compute(word .. "a")))
+               assert.is_true(most_active(built, word) <= 4, "active states should stay few")
+            end
+         end
+
+         -- the chain of optional() copies kept every copy left active: about y / 3 states
+         assert.is_true(most_active(times_chained(char "a", 1, 300), word) > 50)
       end)
 
       it("skip empty operands and return a lone operand itself", function()

@@ -90,6 +90,11 @@ Some changes break code written for 0.04: see *Upgrading from 0.04* in the READM
     20,000 characters takes 0.1 s; `find` used to be O(n³))
   - big patterns compile in linear time (P2-12): `[a]{1000}` takes milliseconds instead of 6 s,
     and long literals or many alternatives no longer slow down quadratically
+  - a wide `{n,m}` range matches in time linear in the subject (P2-13): `[a]{1,1000}` on 1,000
+    characters takes about 7 ms instead of 1.7 s, and its nfa has half the states. `{n,m}` is
+    built as m copies whose accepting states, from the n-th on, are accepting, instead of a
+    chain of optional copies that kept every copy left active (that chain came from the P0-3
+    fix; 0.04 was fast here only through the bug P0-3 fixed)
 - robustness and code quality (P3):
   - `Nfa:addEdge` changes only the given state: edge lists are never changed in place, so lists
     that several states share (after `..`, `star`, `plus`) stay intact (P3-6)

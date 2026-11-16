@@ -210,6 +210,21 @@ describe("Reg:matches", function()
          assert.is_true((r:matches("w500")))
          assert.is_false((r:matches("w501")))
       end)
+
+      it("match a wide {n,m} range in time linear in the subject P2-13", function()
+         -- [a]{1,1000} on 1000 a's took 1.7 s: every step's closure spanned all the
+         -- optional copies left. Now it takes milliseconds; the limit leaves a wide margin
+         local r = Reg "[a]{1,1000}"
+         local t = os.clock()
+
+         assert.is_true((r:matches(("a"):rep(1000))))
+         assert.is_true((r:matches(("a"):rep(500))))
+         assert.is_false((r:matches(("a"):rep(1001))))
+         assert.is_true(os.clock() - t < 0.5, ("matching took %.2f s"):format(os.clock() - t))
+
+         check("(ab){0,3}", { "", "ab", "abab", "ababab" }, { "a", "aba", "abababab" })
+         check("x(a|bc){2,4}y", { "xaay", "xbcay", "xabcabcy" }, { "xay", "xaaaaay" })
+      end)
    end)
 
    describe("unions", function()

@@ -502,6 +502,37 @@ local function non_empty(list)
    return out
 end
 
+local function chain(ms)
+-- copies the nfas of ms (a list of non-empty nfas) one after the other, each once,
+-- and links the accepting states of each one to the start state of the next with
+-- an epsilon. Returns the edges, the number of states, and for each operand the list
+-- of its accepting states at their new numbers.
+   local edges = table()
+   local k = 0
+   local accepting = {}
+
+   for i = 1, #ms do
+      local m = ms[i]
+      copy_states(edges, m, k)
+
+      if i > 1 then
+         -- connect with epsilon-transitions the previous operand to this one's start
+         local last = accepting[i - 1]
+         local initial = { m.current + k }
+
+         for j = 1, #last do
+            add_edge(edges, last[j], e, initial)
+         end
+      end
+
+      accepting[i] = table()
+      copy_accepting(accepting[i], m, k)
+      k = k + m.numStates
+   end
+
+   return edges, k, accepting
+end
+
 function Nfa.concatAll(list)
 -- creates an nfa that recognize L(m1)L(m2)...L(mn), for list = { m1, ..., mn }.
 -- The result is the same as m1 .. m2 .. ... .. mn (same states, edges, start and
@@ -517,29 +548,9 @@ function Nfa.concatAll(list)
       return ms[1]
    end
 
-   local edges = table()
-   local k = 0
-   local last  -- the accepting states of the previous operand, at their offset
+   local edges, k, accepting = chain(ms)
 
-   for i = 1, #ms do
-      local m = ms[i]
-      copy_states(edges, m, k)
-
-      if last then
-         -- connect with epsilon-transitions the previous operand to this one's start
-         local initial = { m.current + k }
-
-         for j = 1, #last do
-            add_edge(edges, last[j], e, initial)
-         end
-      end
-
-      last = table()
-      copy_accepting(last, m, k)
-      k = k + m.numStates
-   end
-
-   return make(edges, last, k, ms[1].current)
+   return make(edges, accepting[#ms], k, ms[1].current)
 end
 
 function Nfa.unionAll(list)
@@ -623,10 +634,9 @@ function Nfa.optional(m)
 end
 
 function Nfa:times(x, y)
--- returns a new nfa that recognize L(m){x, y}: x copies of m followed by y - x
--- optional copies (or by m* when y is nil). x defaults to 0. Without bounds, or
--- when the result is a single copy, the current nfa itself is returned.
--- Built with one Nfa.concatAll, so the time is linear in the number of copies.
+-- returns a new nfa that recognize L(m){x, y}. x defaults to 0, and y == nil means
+-- no upper bound. Without bounds, or when the result is a single copy, the current
+-- nfa itself is returned. Built in time linear in the number of copies.
    if x == nil and y == nil then
       return self
    end
@@ -640,16 +650,51 @@ function Nfa:times(x, y)
    end
 
    if y == nil then
+      -- {x,}: x copies followed by m*
       list[#list + 1] = self:star()
-   else
+      return Nfa.concatAll(list)
+
+   elseif y == x or self:isEmpty() then
+      -- {x}: exactly x copies (an empty nfa is the identity of .., and its
+      -- optional() accepts only "": keep that behaviour for it)
       local opt = self:optional()
 
       for i = 1, y - x do
          list[#list + 1] = opt
       end
+
+      return Nfa.concatAll(list)
    end
 
-   return Nfa.concatAll(list)
+   -- {x,y}: y copies in a row, where the copies after the x-th are optional. The
+   -- accepting states of the x-th copy and of every later one are accepting: stopping
+   -- after copy j means j repetitions. Each accepting state links (epsilon) only to
+   -- the next copy's start, so a run is in at most a few copies at a time and matching
+   -- takes time linear in the subject (P2-13). Chaining y - x optional() copies
+   -- instead (m? m? m?) links every skipped copy to the next one: one step's closure
+   -- spans all the copies left, so matching took time proportional to n * (y - x).
+   -- With x = 0, a one-state nfa that accepts "" comes first: m's own start state
+   -- can't be made accepting, since loops back into it would then be skippable.
+   local first = 1
+
+   if x == 0 then
+      list[1] = Nfa.emptyWord()
+      first = 2
+   end
+
+   for i = 1, y - x do
+      list[#list + 1] = self
+   end
+
+   local edges, k, accepting_of = chain(list)
+   local accepting = table()
+
+   -- the copy that completes x repetitions (or the empty word), then every later one
+   for i = first + x - 1, #list do
+      accepting:append(unpack(accepting_of[i]))
+   end
+
+   return make(edges, accepting, k, list[1].current)
 end
 
 mt.__add    = Nfa.union
