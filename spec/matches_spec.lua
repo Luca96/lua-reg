@@ -172,6 +172,46 @@ describe("Reg:matches", function()
       end)
    end)
 
+   describe("large patterns P2-12", function()
+      -- compiling used to take time quadratic in the number of copies:
+      -- [a]{1000} took 6 s and [a]{1,1000} 13 s; now both take a few milliseconds
+      local function compiles_fast(pattern)
+         local t = os.clock()
+         local r = Reg(pattern)
+         local secs = os.clock() - t
+
+         assert.is_true(secs < 1.5, ("%s compiled in %.2f s"):format(pattern:sub(1, 20), secs))
+         return r
+      end
+
+      it("compile long counts in linear time", function()
+         local r = compiles_fast "[a]{1000}"
+         assert.is_true((r:matches(("a"):rep(1000))))
+         assert.is_false((r:matches(("a"):rep(999))))
+
+         r = compiles_fast "[a]{1,1000}"
+         assert.is_true((r:matches("a")))
+         assert.is_true((r:matches(("a"):rep(1000))))
+         assert.is_false((r:matches(("a"):rep(1001))))
+      end)
+
+      it("compile long sequences and unions in linear time", function()
+         local literal = ("ab"):rep(1000)
+         assert.is_true((compiles_fast(literal):matches(literal)))
+
+         local words = {}
+
+         for i = 1, 500 do
+            words[i] = "w" .. i
+         end
+
+         local r = compiles_fast(table.concat(words, "|"))
+         assert.is_true((r:matches("w1")))
+         assert.is_true((r:matches("w500")))
+         assert.is_false((r:matches("w501")))
+      end)
+   end)
+
    describe("unions", function()
       it("(A|B|C) matches any alternative", function()
          check("(a|b|c)", { "a", "b", "c" }, { "d", "ab" })

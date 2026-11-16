@@ -1,4 +1,5 @@
 local Nfa = require "nfa"
+local h = require "helpers"
 
 -- nfa that accepts exactly the one-character string c
 local function char(c)
@@ -206,6 +207,126 @@ describe("Nfa", function()
          assert.are.same({ "a", "aa", "aaa", "aaaa" }, accepted(late_a():plus(), words))
          assert.are.same({ "", "a" }, accepted(late_a():optional(), words))
          assert.are.same({ "aa", "aaa" }, accepted(late_a():times(2, 3), words))
+         assert.are.same({ "ab", "aab" },
+            accepted(Nfa.concatAll { late_a():times(1, 2), char "b" }, { "b", "ab", "aab", "aaab" }))
+         assert.are.same({ "a", "b" }, accepted(Nfa.unionAll { char "b", late_a() }, words))
+      end)
+   end)
+
+   describe(".concatAll / .unionAll / :times match the chained .. and + P2-12", function()
+      -- every word over {a, b} up to length 6
+      local long_words = { "" }
+
+      do
+         local frontier = { "" }
+
+         for _ = 1, 6 do
+            local next_frontier = {}
+
+            for _, w in ipairs(frontier) do
+               for _, c in ipairs { "a", "b" } do
+                  next_frontier[#next_frontier + 1] = w .. c
+                  long_words[#long_words + 1] = w .. c
+               end
+            end
+
+            frontier = next_frontier
+         end
+      end
+
+      local function bases()
+         return {
+            char "a",
+            char("a"):star(),
+            char("a"):plus(),
+            char "a" + char "b",
+            Nfa.emptyWord(),
+            Nfa { edges = { [3] = { a = { 2 } } }, accepting = { 2 }, start = 3 },
+         }
+      end
+
+      -- the whole structure of an nfa, without metatables
+      local function shape(m)
+         return h.plain { edges = m.edges, accepting = m.accepting, numStates = m.numStates,
+                          current = m.current }
+      end
+
+      -- Nfa:times as it was built before concatAll: one .. per copy
+      local function times_chained(m, x, y)
+         if x == nil and y == nil then
+            return m
+         end
+
+         x = x or 0
+         local r = Nfa.new()
+
+         for _ = 1, x do
+            r = r .. m
+         end
+
+         if y == nil then
+            r = r .. m:star()
+         else
+            for _ = 1, y - x do
+               r = r .. m:optional()
+            end
+         end
+
+         return r
+      end
+
+      it("concatAll builds exactly the nfa of chained ..", function()
+         local bs = bases()
+
+         for _, a in ipairs(bs) do
+            for _, b in ipairs(bs) do
+               for _, c in ipairs(bs) do
+                  assert.are.same(shape((a .. b) .. c), shape(Nfa.concatAll { a, b, c }))
+               end
+            end
+         end
+      end)
+
+      it("unionAll accepts the language of chained + with one start state", function()
+         local bs = bases()
+
+         for _, a in ipairs(bs) do
+            for _, b in ipairs(bs) do
+               for _, c in ipairs(bs) do
+                  local chained, all = (a + b) + c, Nfa.unionAll { a, b, c }
+
+                  assert.are.same(accepted(chained, long_words), accepted(all, long_words))
+                  -- (a + b) + c nests two new start states, unionAll adds one
+                  assert.are.equal(1 + a.numStates + b.numStates + c.numStates, all.numStates)
+                  assert.are.equal(chained.numStates - 1, all.numStates)
+               end
+            end
+         end
+      end)
+
+      it("times builds exactly the nfa of the chained version", function()
+         for _, m in ipairs(bases()) do
+            for x = 0, 3 do
+               assert.are.same(shape(times_chained(m, x)), shape(m:times(x)))
+
+               for y = x, x + 3 do
+                  assert.are.same(shape(times_chained(m, x, y)), shape(m:times(x, y)))
+               end
+            end
+         end
+      end)
+
+      it("skip empty operands and return a lone operand itself", function()
+         local a, empty = char "a", Nfa.new()
+
+         for _, all in ipairs { Nfa.concatAll, Nfa.unionAll } do
+            assert.is_true(all({}):isEmpty())
+            assert.is_true(all({ empty, empty }):isEmpty())
+            assert.are.equal(a, all { a })
+            assert.are.equal(a, all { empty, a, empty })
+         end
+
+         assert.are.same(shape(a .. char "b"), shape(Nfa.concatAll { empty, a, empty, char "b" }))
       end)
    end)
 end)

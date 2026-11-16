@@ -499,6 +499,93 @@ function Nfa.concat(m1, m2)
    return make(edges, accepting, k + m2.numStates, m1.current)
 end
 
+local function non_empty(list)
+-- the operands of list that aren't empty nfas (Nfa.new(): the identity of .. and +)
+   local out = {}
+
+   for i = 1, #list do
+      if not list[i]:isEmpty() then
+         out[#out + 1] = list[i]
+      end
+   end
+
+   return out
+end
+
+function Nfa.concatAll(list)
+-- creates an nfa that recognize L(m1)L(m2)...L(mn), for list = { m1, ..., mn }.
+-- The result is the same as m1 .. m2 .. ... .. mn (same states, edges, start and
+-- accepting states), but each operand is copied only once: chaining .. copies
+-- everything built so far at every step, which takes time quadratic in n.
+-- Empty nfas are skipped, as .. does; with no operand left the result is Nfa.new(),
+-- with one it is that operand itself.
+   local ms = non_empty(list)
+
+   if #ms == 0 then
+      return Nfa.new()
+   elseif #ms == 1 then
+      return ms[1]
+   end
+
+   local edges = table()
+   local k = 0
+   local last  -- the accepting states of the previous operand, at their offset
+
+   for i = 1, #ms do
+      local m = ms[i]
+      copy_states(edges, m, k)
+
+      if last then
+         -- connect with epsilon-transitions the previous operand to this one's start
+         local initial = { m.current + k }
+
+         for j = 1, #last do
+            add_edge(edges, last[j], e, initial)
+         end
+      end
+
+      last = table()
+      copy_accepting(last, m, k)
+      k = k + m.numStates
+   end
+
+   return make(edges, last, k, ms[1].current)
+end
+
+function Nfa.unionAll(list)
+-- creates an nfa that recognize L(m1) U L(m2) U ... U L(mn), for list = { m1, ..., mn }.
+-- Same language as m1 + m2 + ... + mn, but with a single new start state (state 1)
+-- linked to every operand's start, and each operand copied only once (chaining +
+-- copies everything built so far at every step, and nests one start state per +).
+-- Empty nfas are skipped, as + does; with no operand left the result is Nfa.new(),
+-- with one it is that operand itself.
+   local ms = non_empty(list)
+
+   if #ms == 0 then
+      return Nfa.new()
+   elseif #ms == 1 then
+      return ms[1]
+   end
+
+   local edges = table()
+   local accepting = table()
+   local starts = {}
+   local k = 1
+
+   for i = 1, #ms do
+      local m = ms[i]
+      copy_states(edges, m, k)
+      copy_accepting(accepting, m, k)
+      starts[i] = m.current + k
+      k = k + m.numStates
+   end
+
+   -- new start state (that connects the start states of every operand)
+   edges[1] = { [e] = starts }
+
+   return make(edges, accepting, k)
+end
+
 function Nfa.star(m)
 -- creates a new nfa recognize L(m)*
    local edges = table()
@@ -549,27 +636,30 @@ function Nfa:times(x, y)
 -- returns a new nfa that recognize L(m){x, y}: x copies of m followed by y - x
 -- optional copies (or by m* when y is nil). x defaults to 0. Without bounds, or
 -- when the result is a single copy, the current nfa itself is returned.
+-- Built with one Nfa.concatAll, so the time is linear in the number of copies.
    if x == nil and y == nil then
       return self
    end
 
    x = x or 0
 
-   local m = Nfa.new()
+   local list = {}
 
    for i = 1, x do
-      m = m .. self
+      list[i] = self
    end
 
    if y == nil then
-      m = m .. self:star()
+      list[#list + 1] = self:star()
    else
+      local opt = self:optional()
+
       for i = 1, y - x do
-         m = m .. self:optional()
+         list[#list + 1] = opt
       end
    end
 
-   return m
+   return Nfa.concatAll(list)
 end
 
 mt.__add    = Nfa.union

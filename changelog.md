@@ -86,6 +86,10 @@
     compiled the regex instead of a line in `parser.lua` (P3-8)
   - `copy`, `..`, `+`, `star` and `plus` keep an nfa's start state when it isn't state 1
     (`Nfa{ ..., start = 3 }`); they used to assume state 1 (P3-10, found while fixing P3-7)
+- big patterns compile in linear time (P2-12): `[a]{1000}` takes milliseconds instead of 6 s, and
+  long literals or many alternatives no longer slow down quadratically. New `Nfa.concatAll(list)`
+  and `Nfa.unionAll(list)` build an nfa from many operands, copying each once; `Nfa:times` uses
+  `concatAll`
 - **behaviour change:** a negative `init` in `find(str, init)` counts from the end of the
   string, as in `string.find` (it used to be treated as 1); `init` may also be a numeric string,
   and anything else raises *bad argument #2 to 'find'*

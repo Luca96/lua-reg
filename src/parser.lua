@@ -424,22 +424,23 @@ local function compile(self, node)
          return Nfa.emptyWord()
       end
 
-      local m = Nfa.new()
+      -- one concatAll instead of chained .. : linear instead of quadratic time
+      local list = {}
 
       for i = 1, #items do
-         m = m .. compile(self, items[i])
+         list[i] = compile(self, items[i])
       end
 
-      return m
+      return Nfa.concatAll(list)
 
    elseif t == "alt" then
-      local m = Nfa.new()
+      local list = {}
 
       for i = 1, #node.items do
-         m = m + compile(self, node.items[i])
+         list[i] = compile(self, node.items[i])
       end
 
-      return m
+      return Nfa.unionAll(list)
 
    elseif t == "repeat" then
       local m = compile(self, node.node)
