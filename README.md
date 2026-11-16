@@ -1,16 +1,14 @@
-# Lua-Reg 0.04
-A Regular Expression Engine for Lua. 
+# Lua-Reg 0.5.0
+A Regular Expression Engine for Lua: patterns are compiled to an NFA and matched in time linear
+in the length of the string.
 
-## Warning!
-Currently the module is `under development`, so it is:
-- __unfinished__
-- __unoptimized__
-- __unstable__
-
-It runs on Lua 5.1 – 5.4.
+Lua-Reg is still before 1.0, so its API may change between minor versions (each change is listed
+in the changelog). It is tested on Lua 5.4. The code avoids features that only exist in newer
+versions, but it hasn't been tested on Lua 5.1 – 5.3 or LuaJIT yet.
 
 ## Changes
-View the `changelog` for more info about changes.
+View the `changelog` for more info about changes. Coming from 0.04? See
+[Upgrading from 0.04](#upgrading-from-004).
 
 ## Installation
 To install the library just `clone` the repo and install [LuaTable](https://github.com/Luca96/lua-table#installation).
@@ -24,7 +22,7 @@ It expects [lua-table](https://github.com/Luca96/lua-table) to be checked out ne
 
 ```
 busted                           # whole suite
-busted --exclude-tags=knownbug   # skip the tests for the known issues below
+busted --exclude-tags=knownbug   # skip tests tagged #knownbug (tests of open known issues)
 ```
 
 ## Working features:
@@ -138,33 +136,24 @@ splits:eachi(print)
   where the previous match ended (`Reg"a*":findall"baaac"` gives `"", "aaa", ""`).
 - Matching is byte-based: a multi-byte UTF-8 character counts as several characters.
 
-## Known issues & roadmap
-This section tracks what is still open. Update it when an item is fixed or a new one is found.
-Each known issue has an ID, and a `#knownbug` test in `spec/` whose name contains that ID
-(`busted --filter="P1%-2"` runs one; the filter is a Lua pattern, so escape the `-`). When you
-fix one, remove its entry here and the tag from its test, and keep the ID in the test name. IDs
-are never reused.
+## Upgrading from 0.04
+0.5.0 changes how some patterns and searches behave (details in the changelog):
+- **Group numbers** follow the `(` from left to right, and a quantified group counts once:
+  renumber `\1` .. `\5` in patterns written for 0.04.
+- **Malformed patterns raise errors** instead of being matched literally: escape literal
+  brackets, quantifiers and `|` with `:`, and write a literal `]` as `:]`.
+- **Escaped letters and digits** (`:a`, `:5`) are errors; only punctuation can be escaped.
+- **`{,n}`** allows 0 to n repetitions (it was 1 to n): write `{1,n}` for the old meaning.
+- **Empty matches are reported**: `find` returns `"", 1` for `Reg"a*":find"bbb"` (it was `"", 0`),
+  and `findall`, `finder` and `split` include empty matches. Test for a match with
+  `i > 0`, as before.
+- **A negative `init`** in `find(str, init)` counts from the end of the string.
+- **Modules:** `require "luareg"` is unchanged, but `require "nfa"` is now
+  `require "luareg.nfa"`.
 
-Priorities:
-- **P0, urgent:** silently wrong results, or one bad call breaks every later one.
-- **P1, high:** crashes or hangs on input that looks reasonable.
-- **P2, medium:** misparses you can work around, the search API, performance.
-- **P3, low:** robustness and code quality.
-
-### P0: wrong results
-None open (P0-1 to P0-5 were fixed; see the changelog).
-
-### P1: crashes and hangs
-None open (P1-1 to P1-7 were fixed; see the changelog).
-
-### P2: misparses, search, performance
-None open (P2-1 to P2-11 were fixed; see the changelog).
-
-### P3: robustness and code quality
-None open (P3-1 to P3-10 were fixed; see the changelog).
-
-### Roadmap
-- A rockspec, with a `test` section so `luarocks test` runs the suite.
-- Missing regex features: the `.` wildcard (an nfa `default` edge, as `[^...]` uses), anchors
-  (`^`, `$`), `:d`-style classes (escaped letters are already reserved for them).
-- CI running busted on Lua 5.1, 5.4 and LuaJIT.
+## Roadmap
+No known issues are open. Still missing:
+- a rockspec, with a `test` section so `luarocks test` runs the suite;
+- regex features: the `.` wildcard (an nfa `default` edge, as `[^...]` uses), anchors (`^`, `$`),
+  and `:d`-style classes (escaped letters are already reserved for them);
+- CI running busted on Lua 5.1, 5.2, 5.3, 5.4 and LuaJIT (only 5.4 is tested so far).
