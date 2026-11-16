@@ -14,6 +14,8 @@ View the `changelog` for more info about changes.
 
 ## Installation
 To install the library just `clone` the repo and install [LuaTable](https://github.com/Luca96/lua-table#installation).
+Then add the repo's `src` folder to `package.path` (`src/?.lua`): `require "luareg"` loads
+`src/luareg.lua`, which loads its parts `luareg.parser` and `luareg.nfa` from `src/luareg/`.
 
 ## Running the tests
 The test suite uses [busted](https://lunarmodules.github.io/busted/) (`luarocks install busted`).
@@ -162,8 +164,6 @@ None open (P2-1 to P2-11 were fixed; see the changelog).
 None open (P3-1 to P3-10 were fixed; see the changelog).
 
 ### Roadmap
-- Put the modules in a namespace (`luareg.parser`, `luareg.nfa`): `parser` and `nfa` are generic
-  module names that would clash once the library is installed through a rockspec.
 - A rockspec, with a `test` section so `luarocks test` runs the suite.
 - Missing regex features: the `.` wildcard (an nfa `default` edge, as `[^...]` uses), anchors
   (`^`, `$`), `:d`-style classes (escaped letters are already reserved for them).

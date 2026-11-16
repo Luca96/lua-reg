@@ -27,25 +27,15 @@ SOFTWARE.
 -------------------------------------------------------------------------------
 local table = require "luatable"
 -------------------------------------------------------------------------------
-local setmetatable = setmetatable 
+local setmetatable = setmetatable
 local unpack = table.unpack or unpack
-local insert = table.insert
-local remove = table.remove 
 local pairs  = pairs
 local next   = next
-local iter   = table.iter
-local ipairs = ipairs 
-local type   = type 
-local max    = math.max 
+local type   = type
+local max    = math.max
 
-local tb_eachi  = table.eachi
-local tb_clone  = table.clone
-local tb_append = table.append
-local tb_insert = table.insert
-local tb_unique = table.unique
-local tb_klist  = table.keyList
+local tb_clone = table.clone
 
-local void = function() end
 local e = "epsilon"  -- epsilon
 local d = "default"  -- taken on a character that has no edge of its own
 -------------------------------------------------------------------------------

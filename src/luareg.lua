@@ -25,20 +25,12 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 --]]
 -------------------------------------------------------------------------------
-local Parser = require "parser"
+local Parser = require "luareg.parser"
 local table  = require "luatable"
 -------------------------------------------------------------------------------
-local setmetatable = setmetatable 
-local assert = assert 
-local select = select 
-local insert = table.insert 
-local remove = table.remove 
-local concat = table.concat 
-local format = string.format 
-local print  = print 
-local pairs  = pairs 
-local ipairs = ipairs 
-local type   = type 
+local setmetatable = setmetatable
+local format = string.format
+local type   = type
 local error  = error
 local pcall  = pcall
 local tonumber = tonumber

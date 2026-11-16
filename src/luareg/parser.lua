@@ -34,7 +34,7 @@ SOFTWARE.
 --    set   := '[' '^'? item+ ']'
 --    item  := ':' punct | c '-' c | c       -- '-' at either end is literal
 -------------------------------------------------------------------------------
-local Nfa = require "nfa"
+local Nfa = require "luareg.nfa"
 -------------------------------------------------------------------------------
 local format = string.format
 local s_char = string.char
@@ -66,13 +66,6 @@ Parser.SyntaxError = SyntaxError
 local function error(message)
    error_(setmetatable({ message = message }, SyntaxError))
 end
-
--- characters with a meaning outside sets; escape them with ':' to match them
-local special = {
-   ['('] = true, [')'] = true, ['['] = true, [']'] = true, ['{'] = true,
-   ['}'] = true, ['*'] = true, ['+'] = true, ['?'] = true, ['|'] = true,
-   [escape] = true,
-}
 
 local quantifier = { ['*'] = true, ['+'] = true, ['?'] = true, ['{'] = true }
 

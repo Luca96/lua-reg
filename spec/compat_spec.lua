@@ -1,13 +1,13 @@
 -- Regression tests for Lua 5.2+ support: the library used the global `unpack` and
 -- `table.maxn`, which Lua 5.2 removed.
-local Nfa = require "nfa"
+local Nfa = require "luareg.nfa"
 local h = require "helpers"
 
 describe("Lua 5.2+ compatibility", function()
 
    -- reload lua-reg's modules, so they cache `unpack` while the global is missing
    local function fresh_reg()
-      for _, name in ipairs { "luareg", "parser", "nfa" } do
+      for _, name in ipairs { "luareg", "luareg.parser", "luareg.nfa" } do
          package.loaded[name] = nil
       end
       return require "luareg"

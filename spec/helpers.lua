@@ -53,11 +53,11 @@ function helpers.collect(iter, limit)
 end
 
 -- Run fn(Reg) against freshly loaded lua-reg modules, then restore the previous ones.
--- The parser keeps module-level state that a failed compile leaves dirty (README P0-1);
--- tests that compile patterns which crash or raise errors use this, so they can't
--- break the compiles of the tests that run after them.
+-- Tests that compile patterns which raise errors use this, so that an error can never
+-- leave state behind for the tests that run after them (the parser once kept its group
+-- lists at module level, and a failed compile broke the next one: P0-1 in the changelog).
 function helpers.fresh(fn)
-   local names = { "luareg", "parser", "nfa" }
+   local names = { "luareg", "luareg.parser", "luareg.nfa" }
    local saved = {}
 
    for _, name in ipairs(names) do

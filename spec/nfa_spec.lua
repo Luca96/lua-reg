@@ -1,4 +1,4 @@
-local Nfa = require "nfa"
+local Nfa = require "luareg.nfa"
 local h = require "helpers"
 
 -- nfa that accepts exactly the one-character string c

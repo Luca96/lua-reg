@@ -86,6 +86,10 @@
     compiled the regex instead of a line in `parser.lua` (P3-8)
   - `copy`, `..`, `+`, `star` and `plus` keep an nfa's start state when it isn't state 1
     (`Nfa{ ..., start = 3 }`); they used to assume state 1 (P3-10, found while fixing P3-7)
+- **breaking: the modules are namespaced.** `parser.lua` and `nfa.lua` moved to `src/luareg/`:
+  `require "nfa"` is now `require "luareg.nfa"` (and `"parser"` is `"luareg.parser"`).
+  `require "luareg"` is unchanged
+- removed unused local variables from the sources
 - big patterns compile in linear time (P2-12): `[a]{1000}` takes milliseconds instead of 6 s, and
   long literals or many alternatives no longer slow down quadratically. New `Nfa.concatAll(list)`
   and `Nfa.unionAll(list)` build an nfa from many operands, copying each once; `Nfa:times` uses
