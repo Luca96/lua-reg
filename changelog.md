@@ -11,6 +11,9 @@
   lua-table (the project) or `luatable` (the rock and module) throughout.
 
 ### Tests and docs
+- **Known issue P2-14** (README *Known issues*, a `#knownbug` test, first item of the Roadmap): a
+  wide `{n,m}` range over a pattern that can match `""` is slow, e.g. `(a*){0,300}` on 300 a's
+  takes ~180 ms against 2 ms for `(a){0,300}`. Results are correct.
 - **CI.** A GitHub Actions workflow (`.github/workflows/test.yml`) runs the busted suite on
   Lua 5.1, 5.2, 5.3, 5.4 and LuaJIT 2.1 on every push and pull request. All 139 tests pass on
   each of them with no code changes, so the README now lists them as supported instead of
