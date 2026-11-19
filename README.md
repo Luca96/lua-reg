@@ -1,10 +1,12 @@
 # Lua-Reg 0.5.0
+[![test](https://github.com/Luca96/lua-reg/actions/workflows/test.yml/badge.svg)](https://github.com/Luca96/lua-reg/actions/workflows/test.yml)
+
 A Regular Expression Engine for Lua: patterns are compiled to an NFA and matched in time linear
 in the length of the string.
 
 Lua-Reg is still before 1.0, so its API may change between minor versions (each change is listed
-in the changelog). It is tested on Lua 5.4. The code avoids features that only exist in newer
-versions, but it hasn't been tested on Lua 5.1 – 5.3 or LuaJIT yet.
+in the changelog). It runs on Lua 5.1, 5.2, 5.3, 5.4 and LuaJIT 2.1: CI runs the test suite on
+each of them.
 
 ## Changes
 View the `changelog` for more info about changes. Coming from 0.04? See
@@ -24,6 +26,10 @@ It expects [lua-table](https://github.com/Luca96/lua-table) to be checked out ne
 busted                           # whole suite
 busted --exclude-tags=knownbug   # skip tests tagged #knownbug (tests of open known issues)
 ```
+
+CI ([`.github/workflows/test.yml`](.github/workflows/test.yml)) runs
+`busted --exclude-tags=knownbug` on every push and pull request, on Lua 5.1, 5.2, 5.3, 5.4 and
+LuaJIT 2.1, against lua-table's `master`.
 
 ## Working features:
 - quantifiers on characters, sets, groups and backreferences: `*, +, ?, {n}, {n, m}, {,n}, {n,}`
@@ -155,5 +161,4 @@ splits:eachi(print)
 No known issues are open. Still missing:
 - a rockspec, with a `test` section so `luarocks test` runs the suite;
 - regex features: the `.` wildcard (an nfa `default` edge, as `[^...]` uses), anchors (`^`, `$`),
-  and `:d`-style classes (escaped letters are already reserved for them);
-- CI running busted on Lua 5.1, 5.2, 5.3, 5.4 and LuaJIT (only 5.4 is tested so far).
+  and `:d`-style classes (escaped letters are already reserved for them).

@@ -1,5 +1,13 @@
 # Lua-Reg Changelog
 
+## Unreleased
+
+### Tests and docs
+- **CI.** A GitHub Actions workflow (`.github/workflows/test.yml`) runs the busted suite on
+  Lua 5.1, 5.2, 5.3, 5.4 and LuaJIT 2.1 on every push and pull request. All 139 tests pass on
+  each of them with no code changes, so the README now lists them as supported instead of
+  "tested on Lua 5.4 only", and the CI item is gone from the Roadmap.
+
 ## (0.5.0) 16/11/2026
 Versions now follow [semantic versioning](https://semver.org): this release comes after 0.04.
 The parser and the search engine were rewritten, and every issue found in an audit of the
