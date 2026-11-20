@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### New
+- **LuaRocks.** Rockspecs in `rockspecs/`: `lua-reg-0.5.0-1` (the `v0.5.0` tag) and
+  `lua-reg-scm-1` (`master`). They install the modules `luareg`, `luareg.parser` and
+  `luareg.nfa`, depend on `luatable ~> 0.8` (lua-table's first stable rock), and have a busted
+  `test` section, so `luarocks test` runs the suite (skipping `#knownbug` tests). The README's
+  Installation section now starts with `luarocks install lua-reg` and calls the dependency
+  lua-table (the project) or `luatable` (the rock and module) throughout.
+
 ### Tests and docs
 - **CI.** A GitHub Actions workflow (`.github/workflows/test.yml`) runs the busted suite on
   Lua 5.1, 5.2, 5.3, 5.4 and LuaJIT 2.1 on every push and pull request. All 139 tests pass on

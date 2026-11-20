@@ -13,9 +13,21 @@ View the `changelog` for more info about changes. Coming from 0.04? See
 [Upgrading from 0.04](#upgrading-from-004).
 
 ## Installation
-To install the library just `clone` the repo and install [LuaTable](https://github.com/Luca96/lua-table#installation).
-Then add the repo's `src` folder to `package.path` (`src/?.lua`): `require "luareg"` loads
-`src/luareg.lua`, which loads its parts `luareg.parser` and `luareg.nfa` from `src/luareg/`.
+With [LuaRocks](https://luarocks.org):
+
+```
+luarocks install lua-reg
+```
+
+This also installs its dependency, the `luatable` rock from
+[lua-table](https://github.com/Luca96/lua-table). Then `require "luareg"` (the modules are
+`luareg`, `luareg.parser` and `luareg.nfa`).
+
+From a clone of the repository, `luarocks make rockspecs/lua-reg-scm-1.rockspec` installs the
+checked-out code the same way. Without LuaRocks, install lua-table
+([instructions](https://github.com/Luca96/lua-table#installation)) and add the repo's `src`
+folder to `package.path` (`src/?.lua`): `require "luareg"` loads `src/luareg.lua`, which loads
+its parts `luareg.parser` and `luareg.nfa` from `src/luareg/`.
 
 ## Running the tests
 The test suite uses [busted](https://lunarmodules.github.io/busted/) (`luarocks install busted`).
@@ -26,6 +38,10 @@ It expects [lua-table](https://github.com/Luca96/lua-table) to be checked out ne
 busted                           # whole suite
 busted --exclude-tags=knownbug   # skip tests tagged #knownbug (tests of open known issues)
 ```
+
+Or let LuaRocks fetch what the suite needs (busted and the `luatable` rock) and run it:
+`luarocks test rockspecs/lua-reg-scm-1.rockspec` (it skips `#knownbug` tests). busted must find
+`luatable` on its own `package.path`, so install both rocks in the same tree.
 
 CI ([`.github/workflows/test.yml`](.github/workflows/test.yml)) runs
 `busted --exclude-tags=knownbug` on every push and pull request, on Lua 5.1, 5.2, 5.3, 5.4 and
@@ -159,6 +175,5 @@ splits:eachi(print)
 
 ## Roadmap
 No known issues are open. Still missing:
-- a rockspec, with a `test` section so `luarocks test` runs the suite;
 - regex features: the `.` wildcard (an nfa `default` edge, as `[^...]` uses), anchors (`^`, `$`),
   and `:d`-style classes (escaped letters are already reserved for them).
