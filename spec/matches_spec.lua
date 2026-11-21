@@ -172,7 +172,7 @@ describe("Reg:matches", function()
       end)
    end)
 
-   describe("large patterns P2-12", function()
+   describe("large patterns", function()
       -- compiling used to take time quadratic in the number of copies:
       -- [a]{1000} took 6 s and [a]{1,1000} 13 s; now both take a few milliseconds
       local function compiles_fast(pattern)
@@ -184,7 +184,7 @@ describe("Reg:matches", function()
          return r
       end
 
-      it("compile long counts in linear time", function()
+      it("compile long counts in linear time P2-12", function()
          local r = compiles_fast "[a]{1000}"
          assert.is_true((r:matches(("a"):rep(1000))))
          assert.is_false((r:matches(("a"):rep(999))))
@@ -195,7 +195,7 @@ describe("Reg:matches", function()
          assert.is_false((r:matches(("a"):rep(1001))))
       end)
 
-      it("compile long sequences and unions in linear time", function()
+      it("compile long sequences and unions in linear time P2-12", function()
          local literal = ("ab"):rep(1000)
          assert.is_true((compiles_fast(literal):matches(literal)))
 
@@ -224,6 +224,34 @@ describe("Reg:matches", function()
 
          check("(ab){0,3}", { "", "ab", "abab", "ababab" }, { "a", "aba", "abababab" })
          check("x(a|bc){2,4}y", { "xaay", "xbcay", "xabcabcy" }, { "xay", "xaaaaay" })
+      end)
+
+      it("match a wide {n,m} range over a pattern that can match \"\" in linear time P2-14 #knownbug", function()
+         -- the most states active after each character: matching costs that much per character.
+         -- A pattern that accepts "" links every copy of {n,m} to the next through epsilons,
+         -- so almost all copies stay active (899 of 901 states for (a*){0,300})
+         local function most_active(r, word)
+            local states, most = r.nfa:startStates(), 0
+
+            for i = 1, #word do
+               states = r.nfa:step(states, word:sub(i, i))
+               most = math.max(most, #states)
+            end
+
+            return most
+         end
+
+         local word = ("a"):rep(300)
+
+         for _, pattern in ipairs { "(a*){0,300}", "(a?){0,300}", "(a|b*){1,300}" } do
+            local r = Reg(pattern)
+
+            -- the answers are right today; only the cost is wrong
+            assert.is_true((r:matches(word)), pattern)
+            assert.is_true((r:matches("")), pattern)
+            assert.is_false((r:matches(word .. "c")), pattern)
+            assert.is_true(most_active(r, word) <= 10, pattern .. " keeps too many states active")
+         end
       end)
    end)
 

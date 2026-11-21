@@ -1,8 +1,21 @@
 # Lua-Reg Changelog
 
-## Unreleased
+## (0.5.1) 21/11/2026
+The first release on LuaRocks (`luarocks install lua-reg`). The engine is unchanged since 0.5.0:
+this release adds packaging, CI on more Lua versions and documentation.
+
+### New
+- **LuaRocks.** Rockspecs in `rockspecs/`: `lua-reg-0.5.1-1` (the `v0.5.1` tag) and
+  `lua-reg-scm-1` (`master`). They install the modules `luareg`, `luareg.parser` and
+  `luareg.nfa`, depend on `luatable ~> 0.8` (lua-table's first stable rock), and have a busted
+  `test` section, so `luarocks test` runs the suite (skipping `#knownbug` tests). The README's
+  Installation section now starts with `luarocks install lua-reg` and calls the dependency
+  lua-table (the project) or `luatable` (the rock and module) throughout.
 
 ### Tests and docs
+- **Known issue P2-14** (README *Known issues*, a `#knownbug` test, first item of the Roadmap): a
+  wide `{n,m}` range over a pattern that can match `""` is slow, e.g. `(a*){0,300}` on 300 a's
+  takes ~180 ms against 2 ms for `(a){0,300}`. Results are correct.
 - **CI.** A GitHub Actions workflow (`.github/workflows/test.yml`) runs the busted suite on
   Lua 5.1, 5.2, 5.3, 5.4 and LuaJIT 2.1 on every push and pull request. All 139 tests pass on
   each of them with no code changes, so the README now lists them as supported instead of
