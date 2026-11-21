@@ -1,9 +1,11 @@
 # Lua-Reg Changelog
 
-## Unreleased
+## (0.5.1) 21/11/2026
+The first release on LuaRocks (`luarocks install lua-reg`). The engine is unchanged since 0.5.0:
+this release adds packaging, CI on more Lua versions and documentation.
 
 ### New
-- **LuaRocks.** Rockspecs in `rockspecs/`: `lua-reg-0.5.0-1` (the `v0.5.0` tag) and
+- **LuaRocks.** Rockspecs in `rockspecs/`: `lua-reg-0.5.1-1` (the `v0.5.1` tag) and
   `lua-reg-scm-1` (`master`). They install the modules `luareg`, `luareg.parser` and
   `luareg.nfa`, depend on `luatable ~> 0.8` (lua-table's first stable rock), and have a busted
   `test` section, so `luarocks test` runs the suite (skipping `#knownbug` tests). The README's

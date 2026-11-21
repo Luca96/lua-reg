@@ -1,4 +1,4 @@
-# Lua-Reg 0.5.0
+# Lua-Reg 0.5.1
 [![test](https://github.com/Luca96/lua-reg/actions/workflows/test.yml/badge.svg)](https://github.com/Luca96/lua-reg/actions/workflows/test.yml)
 
 A Regular Expression Engine for Lua: patterns are compiled to an NFA and matched in time linear

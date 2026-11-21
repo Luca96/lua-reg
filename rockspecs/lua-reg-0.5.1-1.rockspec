@@ -1,10 +1,10 @@
 rockspec_format = "3.0"
 package = "lua-reg"
-version = "0.5.0-1"
+version = "0.5.1-1"
 
 source = {
    url = "git+https://github.com/Luca96/lua-reg.git",
-   tag = "v0.5.0",
+   tag = "v0.5.1",
 }
 
 description = {

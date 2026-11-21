@@ -40,7 +40,7 @@ local getmetatable = getmetatable
 -- CLASS
 -------------------------------------------------------------------------------
 local Reg = {
-    __VERSION = "0.5.0",
+    __VERSION = "0.5.1",
     __INFO    = "Regular Expression Engine for Lua",
     __AUTHOR  = "Luca Anzalone",
 }
