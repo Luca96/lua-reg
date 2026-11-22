@@ -149,6 +149,55 @@ describe("Reg:matches", function()
          check("(ba*|c){1,2}", { "c", "ba", "cc", "baa", "cba", "bac" }, { "ca", "a", "ccc" })
       end)
 
+      it("{n,m} over a quantifier or a pattern that accepts \"\" keeps its language P2-14", function()
+         -- the parser rewrites these (P2-14); Nfa:times, unchanged, builds the reference.
+         -- Every word over {a, b} up to length 6
+         local words, frontier = { "" }, { "" }
+
+         for _ = 1, 6 do
+            local next_frontier = {}
+
+            for _, w in ipairs(frontier) do
+               for _, c in ipairs { "a", "b" } do
+                  next_frontier[#next_frontier + 1] = w .. c
+                  words[#words + 1] = w .. c
+               end
+            end
+
+            frontier = next_frontier
+         end
+
+         local function accepted(m, list)
+            local out = {}
+
+            for _, w in ipairs(list) do
+               if m:compute(w) then
+                  out[#out + 1] = w
+               end
+            end
+
+            return out
+         end
+
+         local quantifiers = {
+            { "{2}", 2, 2 }, { "{3}", 3, 3 }, { "{0,3}", 0, 3 }, { "{1,3}", 1, 3 },
+            { "{2,3}", 2, 3 }, { "{2,4}", 2, 4 }, { "{2,}", 2 }, { "{3,}", 3 },
+         }
+         local bodies = {
+            "a*", "a+", "a?", "a{0,2}", "a{2,}", "a{1,2}", "(a*)", "(ab)*", "a|b*", "a*b*",
+            "[^a]*", "a|", "",
+         }
+
+         for _, body in ipairs(bodies) do
+            for _, q in ipairs(quantifiers) do
+               local pattern = "(" .. body .. ")" .. q[1]
+               local expected = Reg(body).nfa:times(q[2], q[3])
+
+               assert.are.same(accepted(expected, words), accepted(Reg(pattern).nfa, words), pattern)
+            end
+         end
+      end)
+
       it("{0,m}, {,m} and {0,} allow zero repetitions", function()
          check("(ab){0,2}", { "", "ab", "abab" }, { "a", "ababab" })
          check("(ab){,2}", { "", "ab", "abab" }, { "ababab" })
@@ -226,31 +275,59 @@ describe("Reg:matches", function()
          check("x(a|bc){2,4}y", { "xaay", "xbcay", "xabcabcy" }, { "xay", "xaaaaay" })
       end)
 
-      it("match a wide {n,m} range over a pattern that can match \"\" in linear time P2-14 #knownbug", function()
-         -- the most states active after each character: matching costs that much per character.
-         -- A pattern that accepts "" links every copy of {n,m} to the next through epsilons,
-         -- so almost all copies stay active (899 of 901 states for (a*){0,300})
-         local function most_active(r, word)
-            local states, most = r.nfa:startStates(), 0
+      -- the most states active before and after each character of word: matching costs
+      -- that much per character
+      local function most_active(r, word)
+         local states = r.nfa:startStates()
+         local most = #states
 
-            for i = 1, #word do
-               states = r.nfa:step(states, word:sub(i, i))
-               most = math.max(most, #states)
-            end
-
-            return most
+         for i = 1, #word do
+            states = r.nfa:step(states, word:sub(i, i))
+            most = math.max(most, #states)
          end
 
+         return most
+      end
+
+      it("match a wide {n,m} range over a pattern that can match \"\" in linear time P2-14", function()
+         -- a pattern that accepts "" linked every copy of {n,m} to the next through epsilons,
+         -- so almost all copies stayed active (899 of 901 states for (a*){0,300}), even before
+         -- the first character. The parser now collapses a quantifier over a quantifier, and
+         -- repeats any other pattern that accepts "" without its "" match
          local word = ("a"):rep(300)
 
-         for _, pattern in ipairs { "(a*){0,300}", "(a?){0,300}", "(a|b*){1,300}" } do
+         for _, case in ipairs {
+            { "(a*){0,300}", true }, { "(a?){0,300}", true }, { "(a|b*){1,300}", true },
+            { "(a|b*){150,300}", true }, { "(a*){300}", true }, { "(a*){150,}", true },
+            { "((a*)){2,300}", true }, { "(a{0,3}){0,100}", true }, { "(a+){1,300}", false },
+            { "(a+){150,300}", false },
+         } do
+            local pattern = case[1]
             local r = Reg(pattern)
 
-            -- the answers are right today; only the cost is wrong
             assert.is_true((r:matches(word)), pattern)
-            assert.is_true((r:matches("")), pattern)
+            assert.are.equal(case[2], (r:matches("")), pattern)
             assert.is_false((r:matches(word .. "c")), pattern)
             assert.is_true(most_active(r, word) <= 10, pattern .. " keeps too many states active")
+         end
+
+         assert.is_true(most_active(Reg "(a|b*){150,}", ("b"):rep(300)) <= 10)
+         assert.is_false((Reg "(a+){150,300}":matches(("a"):rep(149))))
+      end)
+
+      it("match a wide {n,m} range over a pattern whose matches split several ways in linear time P2-15 #knownbug", function()
+         -- (a|aa){1,300} reads 300 a's as anything from 150 to 300 repetitions, and each count
+         -- keeps its own copy active (1,050 of 2,100 states). A pattern that accepts "" does
+         -- the same once its "" match is gone: on b's, (a|b*){1,300} acts as (a|b+){0,300}
+         for _, case in ipairs {
+            { "(a|aa){1,300}", ("a"):rep(300) },
+            { "(a|b*){1,300}", ("b"):rep(300) },
+         } do
+            local r = Reg(case[1])
+
+            -- the answers are right; only the cost is wrong
+            assert.is_true((r:matches(case[2])), case[1])
+            assert.is_true(most_active(r, case[2]) <= 10, case[1] .. " keeps too many states active")
          end
       end)
    end)

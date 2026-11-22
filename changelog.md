@@ -1,5 +1,37 @@
 # Lua-Reg Changelog
 
+## Unreleased
+
+### New
+- **`Nfa:nonEmpty()`** builds an nfa for L(m) without the empty word. A new start state takes,
+  on each character, the moves of m's start closure, so every run reads a character before it
+  can accept.
+
+### Fixed
+- **P2-14: a wide `{n,m}` range over a pattern that can match `""` no longer keeps every copy
+  active.** `(a*){0,300}` on 300 a's takes ~2 ms instead of ~130 ms, and `(a|b*){150,300}` ~1 ms
+  instead of ~90 ms. A short or failing subject is cheap again: `(a|b*){1,300}` used to have
+  1,200 states active before reading anything. The parser now rewrites these repeats into
+  equivalent ones, with the same `matches`, `find`, `findall` and `split` results:
+  - a quantifier over a quantifier collapses into one: `(X*){n,m}` is `X*`, `(X+){n,m}` is
+    `X{n,}`, `(X?){n,m}` is `X{0,m}` (in general `(X{a,}){n,m}` is `X{n·a,}` when n ≥ 1 or
+    a ≤ 1, and `(X{0,b}){n,m}` is `X{0,b·m}`). Groups don't stop it: `((a*)){2,5}` is `a*`;
+  - any other pattern L that accepts `""` is repeated without its empty match: `L{n,}` is `L*`
+    and `L{n,m}` is `(L - {""}){0,m}`, built with `Nfa:nonEmpty()`.
+
+  Such a repeat can take up to about twice as long to build (one more state per copy), but
+  matching no longer slows down with the range. `Nfa:times` itself is unchanged.
+
+### Tests and docs
+- **Known issue P2-15** (README *Known issues*, a `#knownbug` test, first item of the Roadmap):
+  a wide `{n,m}` range over a pattern whose matches split into repetitions in several ways is
+  slow, e.g. `(a|aa){1,300}` on 300 a's (~90 ms, 1,050 states active). It also covers what is
+  left of P2-14 for patterns like `(a|b*){1,300}` on a long run of b's (~80 ms, was ~220 ms).
+- New tests check that the rewritten repeats keep their language (against the unchanged
+  `Nfa:times`), test `Nfa:nonEmpty`, and check that a backreference inside its own group is still
+  rejected through a rewritten repeat: 145 tests in all.
+- The Roadmap gains "virtual copies": automata whose size doesn't depend on `{n,m}` bounds.
+
 ## (0.5.1) 21/11/2026
 The first release on LuaRocks (`luarocks install lua-reg`). The engine is unchanged since 0.5.0:
 this release adds packaging, CI on more Lua versions and documentation.

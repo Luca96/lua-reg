@@ -174,21 +174,27 @@ splits:eachi(print)
 
 ## Known issues
 Each issue has an ID (P0 urgent … P3 low; IDs are never reused) and a `#knownbug` test in
-`spec/` whose name contains the ID: `busted --filter="P2%-14"` runs it (the filter is a Lua
+`spec/` whose name contains the ID: `busted --filter="P2%-15"` runs it (the filter is a Lua
 pattern, so escape the `-`).
 
 ### P2: performance
-- **P2-14: A wide `{n,m}` range over a pattern that can match the empty string matches slowly.**
-  `(a*){0,300}` on 300 a's takes about 180 ms, against 2 ms for `(a){0,300}`, and the time grows
-  with the size of the range (n × m for a subject of n characters). `{n,m}` is built from m copies
-  of the repeated pattern, each linked to the next one by an epsilon. When the pattern accepts
-  `""`, those epsilons chain through every copy, so after each character almost all of them are
-  active: 899 of 901 states for `(a*){0,300}`. Patterns that can't match empty (`(a*b){0,300}`)
-  and unbounded repeats (`(a*)*`, `(a*){0,}`) aren't affected. Workaround: repeat something that
-  can't match empty, e.g. `[a]{0,300}` instead of `(a?){0,300}`, or `a*` instead of `(a*){0,300}`.
+- **P2-15: A wide `{n,m}` range over a pattern whose matches split into repetitions in several
+  ways matches slowly.** `(a|aa){1,300}` on 300 a's takes about 90 ms (1,050 of its 2,100 states
+  are active after a character), against 2 ms for `a{1,600}`. `{n,m}` is built from m copies of
+  the repeated pattern, and 300 a's can be read as anything from 150 to 300 repetitions of
+  `(a|aa)`: each count keeps its own copy active, up to one copy per character read. A pattern
+  that can match `""` is repeated without its empty match (P2-14, in the changelog), so it is
+  affected when what is left splits in several ways: `(a|b*){1,300}` on 300 b's takes about
+  80 ms, since a run of b's can be one repetition or many. Results are correct. Workaround: write
+  the repeat as a single quantifier when you can (`a{1,600}` for `(a|aa){1,300}`), or use a
+  smaller range.
 
 ## Roadmap
-- fix the open known issue **P2-14**: a wide `{n,m}` range over a pattern that can match `""`
-  is slow (see [Known issues](#known-issues));
+- fix the open known issue **P2-15**: a wide `{n,m}` range over a pattern whose matches split
+  in several ways is slow (see [Known issues](#known-issues)). A candidate: while matching, of
+  two copies in the same state at or above the minimum count, keep only the lower one, since it
+  accepts everything the higher one does;
+- automata whose size doesn't depend on `{n,m}` bounds ("virtual copies": a copy's edges are
+  built when matching first reaches it), so that `[a-z]{1,100000}` compiles at once;
 - regex features: the `.` wildcard (an nfa `default` edge, as `[^...]` uses), anchors (`^`, `$`),
   and `:d`-style classes (escaped letters are already reserved for them).

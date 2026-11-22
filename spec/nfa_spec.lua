@@ -130,6 +130,91 @@ describe("Nfa", function()
       end)
    end)
 
+   describe(":nonEmpty", function()
+      -- every word over {a, b, c} up to length 4 (c reaches the default edges)
+      local all_words, frontier = { "" }, { "" }
+
+      for _ = 1, 4 do
+         local next_frontier = {}
+
+         for _, w in ipairs(frontier) do
+            for _, c in ipairs { "a", "b", "c" } do
+               next_frontier[#next_frontier + 1] = w .. c
+               all_words[#all_words + 1] = w .. c
+            end
+         end
+
+         frontier = next_frontier
+      end
+
+      -- [^a]: an explicit empty edge (no move) for "a", the default edge for the rest
+      local function not_a()
+         return Nfa { edges = { [1] = { a = {}, [Nfa.default] = { 2 } } }, accepting = { 2 } }
+      end
+
+      local function bases()
+         return {
+            char "a", char("a"):star(), char("a"):plus(), char("a"):optional(),
+            char "a" + char "b", char("a"):star() .. char "b",
+            char("a"):star() .. char("b"):star(), (char "a" .. char "b"):star(),
+            Nfa.emptyWord(), Nfa { edges = { [3] = { a = { 2 } } }, accepting = { 2 }, start = 3 },
+            not_a(), not_a():star(), not_a():star() + char("a"):star(),
+            not_a():optional() .. char "b",
+         }
+      end
+
+      it("accepts the language of m without the empty word P2-14", function()
+         for i, m in ipairs(bases()) do
+            local expected = {}
+
+            for _, w in ipairs(accepted(m, all_words)) do
+               if w ~= "" then
+                  expected[#expected + 1] = w
+               end
+            end
+
+            local n = m:nonEmpty()
+
+            assert.are.same(expected, accepted(n, all_words), "base " .. i)
+            assert.are.equal(m.numStates + 1, n.numStates, "base " .. i)
+            assert.is_false(n:anyAccepting(n:startStates()), "base " .. i)
+         end
+      end)
+
+      it("doesn't change m", function()
+         for _, m in ipairs(bases()) do
+            local before = h.plain { edges = m.edges, accepting = m.accepting, current = m.current,
+                                     numStates = m.numStates }
+            m:nonEmpty()
+
+            assert.are.same(before, h.plain { edges = m.edges, accepting = m.accepting,
+                                              current = m.current, numStates = m.numStates })
+         end
+      end)
+
+      it("of an nfa that accepts only \"\" or nothing accepts nothing", function()
+         assert.are.same({}, accepted(Nfa.emptyWord():nonEmpty(), all_words))
+         assert.is_false(Nfa.emptyWord():nonEmpty():isEmpty())
+         assert.are.same({}, accepted(Nfa.new():nonEmpty(), all_words))
+      end)
+
+      it("repeats a pattern that accepts \"\" like times does P2-14", function()
+         -- for an m that accepts "": m{x,y} = (L(m) - {""}){0,y} and m{x,} = m*
+         for i, m in ipairs(bases()) do
+            if m:anyAccepting(m:startStates()) then
+               for x = 0, 3 do
+                  assert.are.same(accepted(m:times(x), all_words), accepted(m:star(), all_words))
+
+                  for y = math.max(x, 1), x + 2 do
+                     assert.are.same(accepted(m:times(x, y), all_words),
+                        accepted(m:nonEmpty():times(0, y), all_words), ("base %d {%d,%d}"):format(i, x, y))
+                  end
+               end
+            end
+         end
+      end)
+   end)
+
    describe(":addEdge", function()
       it("changes only the given state P3-6", function()
          -- (a|b)c: the accepting states of a (3) and b (5) both get an epsilon edge

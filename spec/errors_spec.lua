@@ -169,6 +169,9 @@ describe("errors", function()
          { "(a\1)", "inside the group it refers to" },
          { "((a)\1)", "inside the group it refers to" },
          { "(a\2)(b\1)", "inside the group it refers to" },
+         -- through the parser's rewrite of a quantifier over a quantifier (P2-14)
+         { "(\1*){2,3}", "inside the group it refers to" },
+         { "((\1)+){2}", "inside the group it refers to" },
       }
    end)
 

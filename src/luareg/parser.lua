@@ -365,6 +365,27 @@ local function nfa_set(chars, complement)
       accepting = { 2 },
    }
 end
+
+local function peel(node)
+   -- the node that node stands for without its groups and one-item sequences: ((a*))
+   -- is a*. Only for looking: the tree isn't changed (backrefs compile the groups)
+   while true do
+      local t = node.type
+
+      if t == "group" then
+         node = node.body
+      elseif (t == "seq" or t == "alt") and #node.items == 1 then
+         node = node.items[1]
+      else
+         return node
+      end
+   end
+end
+
+local function accepts_empty(m)
+   -- true when the nfa accepts the empty word ""
+   return m:anyAccepting(m:startStates())
+end
 -------------------------------------------------------------------------------
 -- Parser
 -------------------------------------------------------------------------------
@@ -436,8 +457,28 @@ local function compile(self, node)
       return Nfa.unionAll(list)
 
    elseif t == "repeat" then
-      local m = compile(self, node.node)
       local x, y = node.min, node.max
+      local shortcut = (y == nil and x <= 1) or (x == 0 and y == 1)  -- * + ?
+
+      if not shortcut then
+         -- a quantifier over a quantifier collapses into one (P2-14), with L = L(X):
+         --    (X{a,}){x,y}  = X{x*a,}   when x >= 1 or a <= 1: (X*){x,y} = X*, (X+){x,y} = X{x,}
+         --    (X{0,b}){x,y} = X{0,b*y}  for a bounded y:        (X?){x,y} = X{0,y}
+         -- (k repeats of X{a,} are L^(>= k*a), k repeats of X{0,b} are L^(0..k*b))
+         local inner = peel(node.node)
+
+         if inner.type == "repeat" then
+            local a, b = inner.min, inner.max
+
+            if b == nil and (x >= 1 or a <= 1) then
+               return compile(self, { type = "repeat", node = inner.node, min = x * a })
+            elseif b ~= nil and a == 0 and y ~= nil then
+               return compile(self, { type = "repeat", node = inner.node, min = 0, max = b * y })
+            end
+         end
+      end
+
+      local m = compile(self, node.node)
 
       if x == 0 and y == nil then
          return m:star()
@@ -445,6 +486,17 @@ local function compile(self, node)
          return m:plus()
       elseif x == 0 and y == 1 then
          return m:optional()
+      end
+
+      if (y == nil or y >= 2) and accepts_empty(m) then
+         -- a pattern that accepts "" would keep all its copies linked through epsilons, so
+         -- every copy stays active while matching (P2-14). Since "" is in L, L^k is inside
+         -- L^(k+1): L{x,} = L* and L{x,y} = L^y = (L - {""}){0,y}
+         if y == nil then
+            return m:star()
+         end
+
+         return m:nonEmpty():times(0, y)
       end
 
       return m:times(x, y)
