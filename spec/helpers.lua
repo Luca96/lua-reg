@@ -76,6 +76,58 @@ function helpers.fresh(fn)
    end
 end
 
+-- Measuring helpers for the #perf specs. Compare against a baseline measured in the same
+-- run: absolute numbers differ between machines and Lua versions.
+
+-- The best time per call of f, in seconds: each of `rounds` rounds (default 3) calls f until
+-- 20 ms have passed (os.clock can tick in 1 ms steps), and the fastest round counts.
+function helpers.per_op(f, rounds)
+   local best = math.huge
+
+   for _ = 1, rounds or 3 do
+      collectgarbage()
+      local n, start = 0, os.clock()
+
+      repeat
+         f()
+         n = n + 1
+      until os.clock() - start >= 0.02
+
+      best = math.min(best, (os.clock() - start) / n)
+   end
+
+   return best
+end
+
+-- The KB that the result of f() keeps alive after a full collection, and that result.
+function helpers.retained(f)
+   collectgarbage()
+   collectgarbage()
+   local before = collectgarbage("count")
+   local keep = f()
+   collectgarbage()
+   collectgarbage()
+
+   return collectgarbage("count") - before, keep
+end
+
+-- The KB allocated while f() runs, garbage included (the collector is stopped meanwhile).
+function helpers.allocated(f)
+   collectgarbage()
+   collectgarbage()
+   collectgarbage("stop")
+   local before = collectgarbage("count")
+   local ok, err = pcall(f)
+   local kb = collectgarbage("count") - before
+   collectgarbage("restart")
+
+   if not ok then
+      error(err, 0)
+   end
+
+   return kb
+end
+
 -- True when the regex `pattern` matches the whole string `s`.
 -- (Reg:matches also returns the word; keep only the boolean.)
 function helpers.accepts(pattern, s)

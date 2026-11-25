@@ -149,8 +149,10 @@ describe("Reg:matches", function()
          check("(ba*|c){1,2}", { "c", "ba", "cc", "baa", "cba", "bac" }, { "ca", "a", "ccc" })
       end)
 
-      it("{n,m} over a quantifier or a pattern that accepts \"\" keeps its language P2-14", function()
+      it("a repeat over a repeated unit or a pattern that accepts \"\" keeps its language P2-14", function()
          -- the parser rewrites these (P2-14); Nfa:times, unchanged, builds the reference.
+         -- The bodies cover one unit (a|aa, aa*, ab(ab)*), counts with a gap that must not be
+         -- rewritten (a|aaa; aa and aa|aaa under {0,3} and {1,3}), and different units.
          -- Every word over {a, b} up to length 6
          local words, frontier = { "" }, { "" }
 
@@ -182,10 +184,13 @@ describe("Reg:matches", function()
          local quantifiers = {
             { "{2}", 2, 2 }, { "{3}", 3, 3 }, { "{0,3}", 0, 3 }, { "{1,3}", 1, 3 },
             { "{2,3}", 2, 3 }, { "{2,4}", 2, 4 }, { "{2,}", 2 }, { "{3,}", 3 },
+            { "*", 0 }, { "+", 1 }, { "?", 0, 1 },
          }
          local bodies = {
             "a*", "a+", "a?", "a{0,2}", "a{2,}", "a{1,2}", "(a*)", "(ab)*", "a|b*", "a*b*",
             "[^a]*", "a|", "",
+            "a|aa", "aa*", "a|aa|aaa", "ab|abab", "ab(ab)*", "ab|ab(ab)", "[ab]|[ba][ab]",
+            "a|aaa", "aa", "aa|aaa", "a(ba)*b", "ab*a",
          }
 
          for _, body in ipairs(bodies) do
@@ -315,13 +320,57 @@ describe("Reg:matches", function()
          assert.is_false((Reg "(a+){150,300}":matches(("a"):rep(149))))
       end)
 
-      it("match a wide {n,m} range over a pattern whose matches split several ways in linear time P2-15 #knownbug", function()
+      it("count a repeated unit in linear time P2-14", function()
          -- (a|aa){1,300} reads 300 a's as anything from 150 to 300 repetitions, and each count
-         -- keeps its own copy active (1,050 of 2,100 states). A pattern that accepts "" does
-         -- the same once its "" match is gone: on b's, (a|b*){1,300} acts as (a|b+){0,300}
+         -- kept its own copy active (1,050 of 2,100 states). The parser now sees the body as
+         -- one unit repeated a range of times (a 1..2) and counts the unit: a{1,600}
+         local a300, ab150 = ("a"):rep(300), ("ab"):rep(150)
+         local function a(n) return ("a"):rep(n) end
+         local function ab(n) return ("ab"):rep(n) end
+
+         -- pattern, a subject it matches, strings it must reject (around its bounds)
          for _, case in ipairs {
-            { "(a|aa){1,300}", ("a"):rep(300) },
+            { "(a|aa){1,300}", a300, { "", a(601) } },
+            { "(a{1,2}){1,300}", a300, { "", a(601) } },
+            { "([ab]|[ba][ab]){1,300}", a300, { "", a(601) } },
+            { "(aa*){1,300}", a300, { "" } },
+            { "(a{1,300})+", a300, { "" } },
+            { "(a{1,600})*", a300, { "b" } },
+            { "((a|aa){1,300})*", a300, { "b" } },
+            { "a(a|aa){1,300}", a300, { "a", a(602) } },
+            { "(a|aa){150,300}", a300, { a(149), a(601) } },
+            { "(a|aa|aaa){100,300}", a300, { a(99), a(901) } },
+            { "(ab|abab){1,300}", ab150, { "", ab(601) } },
+            { "(ab|ab(ab)){1,300}", ab150, { "", ab(601) } },
+            { "(ab(ab)*){1,300}", ab150, { "", "a", "aba" } },
+         } do
+            local pattern = case[1]
+            local r = Reg(pattern)
+
+            assert.is_true((r:matches(case[2])), pattern)
+
+            for _, s in ipairs(case[3]) do
+               assert.is_false((r:matches(s)), ("%s should reject %d chars"):format(pattern, #s))
+            end
+
+            assert.is_true(most_active(r, case[2]) <= 10, pattern .. " keeps too many states active")
+         end
+
+         -- the same automaton as the pattern written as one count
+         assert.are.equal(Reg("a{1,600}").nfa.numStates, Reg("(a|aa){1,300}").nfa.numStates)
+         -- a backreference is a unit too: (a)(\1|\1\1){1,3} is a followed by 1 to 6 a's
+         check("(a)(\1|\1\1){1,3}", { a(2), a(7) }, { a(1), a(8) })
+      end)
+
+      it("match a wide {n,m} range over a pattern that isn't one counted unit in linear time P2-15 #knownbug", function()
+         -- a pattern that isn't one unit repeated a range of times keeps a copy active per
+         -- number of repetitions: different units ((a|b*) on b's, where a run of b's is one
+         -- repetition or many), counts with a gap ((a|aaa): 1 or 3, never 2), and a unit
+         -- written rotated (a(ba)*b is (ab)+, read as a (ba)* b)
+         for _, case in ipairs {
+            { "(a|aaa){1,300}", ("a"):rep(300) },
             { "(a|b*){1,300}", ("b"):rep(300) },
+            { "(a(ba)*b){1,300}", ("ab"):rep(150) },
          } do
             local r = Reg(case[1])
 

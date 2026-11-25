@@ -35,9 +35,15 @@ It expects [lua-table](https://github.com/Luca96/lua-table) to be checked out ne
 (`../lua-table`). From the repository root:
 
 ```
-busted                           # whole suite
-busted --exclude-tags=knownbug   # skip tests tagged #knownbug (tests of open known issues)
+busted                                # whole suite
+busted --exclude-tags=knownbug        # skip tests tagged #knownbug (tests of open known issues)
+busted --tags=perf                    # only the performance tests (#perf)
+busted --exclude-tags=knownbug,perf   # skip those too, e.g. on a busy machine
 ```
+
+The `#perf` tests compare speed and memory against a baseline measured in the same run (for
+example a repeat the parser rewrites against the same pattern written as one count), with a
+wide margin, so they don't depend on how fast the machine is.
 
 Or let LuaRocks fetch what the suite needs (busted and the `luatable` rock) and run it:
 `luarocks test rockspecs/lua-reg-scm-1.rockspec` (it skips `#knownbug` tests). busted must find
@@ -178,22 +184,27 @@ Each issue has an ID (P0 urgent … P3 low; IDs are never reused) and a `#knownb
 pattern, so escape the `-`).
 
 ### P2: performance
-- **P2-15: A wide `{n,m}` range over a pattern whose matches split into repetitions in several
-  ways matches slowly.** `(a|aa){1,300}` on 300 a's takes about 90 ms (1,050 of its 2,100 states
-  are active after a character), against 2 ms for `a{1,600}`. `{n,m}` is built from m copies of
-  the repeated pattern, and 300 a's can be read as anything from 150 to 300 repetitions of
-  `(a|aa)`: each count keeps its own copy active, up to one copy per character read. A pattern
-  that can match `""` is repeated without its empty match (P2-14, in the changelog), so it is
-  affected when what is left splits in several ways: `(a|b*){1,300}` on 300 b's takes about
-  80 ms, since a run of b's can be one repetition or many. Results are correct. Workaround: write
-  the repeat as a single quantifier when you can (`a{1,600}` for `(a|aa){1,300}`), or use a
-  smaller range.
+- **P2-15: A wide `{n,m}` range over a pattern that isn't one unit repeated a range of times
+  matches slowly.** `{n,m}` is built from m copies of the repeated pattern. When that pattern is
+  one unit repeated a range of times with no count left out (`(a|aa)` is `a{1,2}`, `aa*` is
+  `a+`), the parser counts the unit instead (P2-14, in the changelog). Otherwise each way of
+  splitting the subject into repetitions keeps its own copy active, up to one copy per character
+  read:
+  - different units: `(a|b*){1,300}` on 300 b's (899 states active, about 100 ms), since a run
+    of b's is one repetition or many; `(a*b*){0,300}` on a's;
+  - counts with a gap: `(a|aaa){1,300}` on 300 a's (900 states active, about 100 ms), one or
+    three a's per repetition but never two;
+  - a unit written rotated: `(a(ba)*b){1,300}` on `abab…` (747 states active), which is `(ab)+`
+    written as `a`, `(ba)*`, `b`.
+
+  Results are correct. Workaround: write the repeated pattern as one unit with a range of
+  counts (`(ab)+` for `a(ba)*b`), or use a smaller range.
 
 ## Roadmap
-- fix the open known issue **P2-15**: a wide `{n,m}` range over a pattern whose matches split
-  in several ways is slow (see [Known issues](#known-issues)). A candidate: while matching, of
-  two copies in the same state at or above the minimum count, keep only the lower one, since it
-  accepts everything the higher one does;
+- fix the open known issue **P2-15**: a wide `{n,m}` range over a pattern that isn't one unit
+  repeated a range of times is slow (see [Known issues](#known-issues)). A candidate: while
+  matching, of two copies of the pattern in the same state, both at or above the minimum count,
+  keep only the lower one, since it accepts everything the higher one does;
 - automata whose size doesn't depend on `{n,m}` bounds ("virtual copies": a copy's edges are
   built when matching first reaches it), so that `[a-z]{1,100000}` compiles at once;
 - regex features: the `.` wildcard (an nfa `default` edge, as `[^...]` uses), anchors (`^`, `$`),
