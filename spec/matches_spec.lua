@@ -149,6 +149,60 @@ describe("Reg:matches", function()
          check("(ba*|c){1,2}", { "c", "ba", "cc", "baa", "cba", "bac" }, { "ca", "a", "ccc" })
       end)
 
+      it("a repeat over a repeated unit or a pattern that accepts \"\" keeps its language P2-14", function()
+         -- the parser rewrites these (P2-14); Nfa:times, unchanged, builds the reference.
+         -- The bodies cover one unit (a|aa, aa*, ab(ab)*), counts with a gap that must not be
+         -- rewritten (a|aaa; aa and aa|aaa under {0,3} and {1,3}), and different units.
+         -- Every word over {a, b} up to length 6
+         local words, frontier = { "" }, { "" }
+
+         for _ = 1, 6 do
+            local next_frontier = {}
+
+            for _, w in ipairs(frontier) do
+               for _, c in ipairs { "a", "b" } do
+                  next_frontier[#next_frontier + 1] = w .. c
+                  words[#words + 1] = w .. c
+               end
+            end
+
+            frontier = next_frontier
+         end
+
+         local function accepted(m, list)
+            local out = {}
+
+            for _, w in ipairs(list) do
+               if m:compute(w) then
+                  out[#out + 1] = w
+               end
+            end
+
+            return out
+         end
+
+         local quantifiers = {
+            { "{2}", 2, 2 }, { "{3}", 3, 3 }, { "{0,3}", 0, 3 }, { "{1,3}", 1, 3 },
+            { "{2,3}", 2, 3 }, { "{2,4}", 2, 4 }, { "{2,}", 2 }, { "{3,}", 3 },
+            { "*", 0 }, { "+", 1 }, { "?", 0, 1 },
+         }
+         local bodies = {
+            "a*", "a+", "a?", "a{0,2}", "a{2,}", "a{1,2}", "(a*)", "(ab)*", "a|b*", "a*b*",
+            "[^a]*", "a|", "",
+            "a|aa", "aa*", "a|aa|aaa", "ab|abab", "ab(ab)*", "ab|ab(ab)", "[ab]|[ba][ab]",
+            "a|aaa", "aa", "aa|aaa", "a(ba)*b", "ab*a",
+         }
+
+         for _, body in ipairs(bodies) do
+            for _, q in ipairs(quantifiers) do
+               local pattern = "(" .. body .. ")" .. q[1]
+               local expected = Reg(body).nfa:times(q[2], q[3])
+
+               assert.are.same(accepted(expected, words), accepted(Reg(pattern).nfa, words), pattern)
+            end
+         end
+      end)
+
       it("{0,m}, {,m} and {0,} allow zero repetitions", function()
          check("(ab){0,2}", { "", "ab", "abab" }, { "a", "ababab" })
          check("(ab){,2}", { "", "ab", "abab" }, { "ababab" })
@@ -226,31 +280,103 @@ describe("Reg:matches", function()
          check("x(a|bc){2,4}y", { "xaay", "xbcay", "xabcabcy" }, { "xay", "xaaaaay" })
       end)
 
-      it("match a wide {n,m} range over a pattern that can match \"\" in linear time P2-14 #knownbug", function()
-         -- the most states active after each character: matching costs that much per character.
-         -- A pattern that accepts "" links every copy of {n,m} to the next through epsilons,
-         -- so almost all copies stay active (899 of 901 states for (a*){0,300})
-         local function most_active(r, word)
-            local states, most = r.nfa:startStates(), 0
+      -- the most states active before and after each character of word: matching costs
+      -- that much per character
+      local function most_active(r, word)
+         local states = r.nfa:startStates()
+         local most = #states
 
-            for i = 1, #word do
-               states = r.nfa:step(states, word:sub(i, i))
-               most = math.max(most, #states)
-            end
-
-            return most
+         for i = 1, #word do
+            states = r.nfa:step(states, word:sub(i, i))
+            most = math.max(most, #states)
          end
 
+         return most
+      end
+
+      it("match a wide {n,m} range over a pattern that can match \"\" in linear time P2-14", function()
+         -- a pattern that accepts "" linked every copy of {n,m} to the next through epsilons,
+         -- so almost all copies stayed active (899 of 901 states for (a*){0,300}), even before
+         -- the first character. The parser now collapses a quantifier over a quantifier, and
+         -- repeats any other pattern that accepts "" without its "" match
          local word = ("a"):rep(300)
 
-         for _, pattern in ipairs { "(a*){0,300}", "(a?){0,300}", "(a|b*){1,300}" } do
+         for _, case in ipairs {
+            { "(a*){0,300}", true }, { "(a?){0,300}", true }, { "(a|b*){1,300}", true },
+            { "(a|b*){150,300}", true }, { "(a*){300}", true }, { "(a*){150,}", true },
+            { "((a*)){2,300}", true }, { "(a{0,3}){0,100}", true }, { "(a+){1,300}", false },
+            { "(a+){150,300}", false },
+         } do
+            local pattern = case[1]
             local r = Reg(pattern)
 
-            -- the answers are right today; only the cost is wrong
             assert.is_true((r:matches(word)), pattern)
-            assert.is_true((r:matches("")), pattern)
+            assert.are.equal(case[2], (r:matches("")), pattern)
             assert.is_false((r:matches(word .. "c")), pattern)
             assert.is_true(most_active(r, word) <= 10, pattern .. " keeps too many states active")
+         end
+
+         assert.is_true(most_active(Reg "(a|b*){150,}", ("b"):rep(300)) <= 10)
+         assert.is_false((Reg "(a+){150,300}":matches(("a"):rep(149))))
+      end)
+
+      it("count a repeated unit in linear time P2-14", function()
+         -- (a|aa){1,300} reads 300 a's as anything from 150 to 300 repetitions, and each count
+         -- kept its own copy active (1,050 of 2,100 states). The parser now sees the body as
+         -- one unit repeated a range of times (a 1..2) and counts the unit: a{1,600}
+         local a300, ab150 = ("a"):rep(300), ("ab"):rep(150)
+         local function a(n) return ("a"):rep(n) end
+         local function ab(n) return ("ab"):rep(n) end
+
+         -- pattern, a subject it matches, strings it must reject (around its bounds)
+         for _, case in ipairs {
+            { "(a|aa){1,300}", a300, { "", a(601) } },
+            { "(a{1,2}){1,300}", a300, { "", a(601) } },
+            { "([ab]|[ba][ab]){1,300}", a300, { "", a(601) } },
+            { "(aa*){1,300}", a300, { "" } },
+            { "(a{1,300})+", a300, { "" } },
+            { "(a{1,600})*", a300, { "b" } },
+            { "((a|aa){1,300})*", a300, { "b" } },
+            { "a(a|aa){1,300}", a300, { "a", a(602) } },
+            { "(a|aa){150,300}", a300, { a(149), a(601) } },
+            { "(a|aa|aaa){100,300}", a300, { a(99), a(901) } },
+            { "(ab|abab){1,300}", ab150, { "", ab(601) } },
+            { "(ab|ab(ab)){1,300}", ab150, { "", ab(601) } },
+            { "(ab(ab)*){1,300}", ab150, { "", "a", "aba" } },
+         } do
+            local pattern = case[1]
+            local r = Reg(pattern)
+
+            assert.is_true((r:matches(case[2])), pattern)
+
+            for _, s in ipairs(case[3]) do
+               assert.is_false((r:matches(s)), ("%s should reject %d chars"):format(pattern, #s))
+            end
+
+            assert.is_true(most_active(r, case[2]) <= 10, pattern .. " keeps too many states active")
+         end
+
+         -- the same automaton as the pattern written as one count
+         assert.are.equal(Reg("a{1,600}").nfa.numStates, Reg("(a|aa){1,300}").nfa.numStates)
+         -- a backreference is a unit too: (a)(\1|\1\1){1,3} is a followed by 1 to 6 a's
+         check("(a)(\1|\1\1){1,3}", { a(2), a(7) }, { a(1), a(8) })
+      end)
+
+      it("match a wide {n,m} range over a pattern that isn't one counted unit in linear time P2-15 #knownbug", function()
+         -- a pattern that isn't one unit repeated a range of times keeps a copy active per
+         -- number of repetitions: different units ((a|b*) on b's, where a run of b's is one
+         -- repetition or many), counts with a gap ((a|aaa): 1 or 3, never 2), and a unit
+         -- written rotated (a(ba)*b is (ab)+, read as a (ba)* b)
+         for _, case in ipairs {
+            { "(a|aaa){1,300}", ("a"):rep(300) },
+            { "(a|b*){1,300}", ("b"):rep(300) },
+            { "(a(ba)*b){1,300}", ("ab"):rep(150) },
+         } do
+            local r = Reg(case[1])
+
+            -- the answers are right; only the cost is wrong
+            assert.is_true((r:matches(case[2])), case[1])
+            assert.is_true(most_active(r, case[2]) <= 10, case[1] .. " keeps too many states active")
          end
       end)
    end)

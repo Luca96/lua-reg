@@ -43,6 +43,9 @@ local byte   = string.byte
 local find   = string.find
 local match  = string.match
 local concat = table.concat
+local sort   = table.sort
+local floor  = math.floor
+local huge   = math.huge
 local ipairs   = ipairs
 local tonumber = tonumber
 local tostring = tostring
@@ -365,6 +368,318 @@ local function nfa_set(chars, complement)
       accepting = { 2 },
    }
 end
+
+local function accepts_empty(m)
+   -- true when the nfa accepts the empty word ""
+   return m:anyAccepting(m:startStates())
+end
+-------------------------------------------------------------------------------
+-- Repeated units (P2-14)
+-------------------------------------------------------------------------------
+-- power(self, node) = { unit = U, lo = l, hi = h } means that node matches what U^l,
+-- U^(l+1), ..., U^h match, where U^k is k matches of U in a row and h may be huge (no
+-- bound). The empty pattern is EMPTY (no unit, 0..0), which combines with any unit; a node
+-- with no simpler description is its own unit, 1..1. Units are compared by key, computed
+-- only when two units are compared: two nodes with the same key are the same tree, up to
+-- groups, one-item sequences, the order of alternatives and the order of a set's
+-- characters, so they match the same strings.
+--
+--    char, set, backref                      its own unit, 1..1
+--    group, one-item seq or alt              the power of its item
+--    seq of items with one unit U            U, the sum of the ranges: aa* is a 1..huge
+--    seq of items with different units       chunks of one unit (factor), or else the
+--                                            smallest period of the items: abab is (ab) 2..2
+--    alt of items with one unit U            U, the union of the ranges if it has no gap:
+--                                            a|aa is a 1..2, a| is a 0..1 (a|aaa: no)
+--    repeat X{x,y}, X = U l..h               U x*l..y*h, if no count is left out (no_gap)
+--    anything else                           its own unit, 1..1
+--
+-- Each step is exact: L^i L^j = L^(i+j) (sums of ranges), the union of L^S over sets of
+-- counts S is L^(union of S), and k matches of L^(l..h) in a row are L^(k*l..k*h).
+local EMPTY = { lo = 0, hi = 0 }
+
+local function set_key(chars, negate)
+   -- a set's characters, sorted and without duplicates ([a-ca] is "abca"); [a] keys as a
+   local seen, list = {}, {}
+
+   for i = 1, #chars do
+      local c = sub(chars, i, i)
+
+      if not seen[c] then
+         seen[c] = true
+         list[#list + 1] = c
+      end
+   end
+
+   sort(list)
+   local s = concat(list)
+
+   if not negate and #s == 1 then
+      return "c" .. s
+   end
+
+   return (negate and "N" or "S") .. #s .. ":" .. s
+end
+
+local function key(self, node)
+   -- a string that names the tree of node. Every part ends with a field of fixed length
+   -- or with a ':' or '}', so two different trees never get the same key
+   local k = self.keys[node]
+
+   if k == nil then
+      local t = node.type
+
+      if t == "char" then
+         k = "c" .. node.char
+      elseif t == "set" then
+         k = set_key(node.chars, node.negate)
+      elseif t == "backref" then
+         k = "B" .. node.index
+      elseif t == "group" then
+         k = key(self, node.body)
+      elseif t == "repeat" then
+         k = "{" .. node.min .. "," .. (node.max or "") .. "}" .. key(self, node.node)
+      elseif #node.items == 1 then
+         k = key(self, node.items[1])
+      else
+         local keys = {}
+
+         for i = 1, #node.items do
+            keys[i] = key(self, node.items[i])
+         end
+
+         if t == "alt" then
+            sort(keys)  -- the order of alternatives doesn't matter
+         end
+
+         k = (t == "seq" and "(" or "<") .. #keys .. ":" .. concat(keys)
+      end
+
+      self.keys[node] = k
+   end
+
+   return k
+end
+
+local function opaque(self, node)
+   -- node is its own unit, 1..1
+   return { unit = node, lo = 1, hi = 1 }
+end
+
+local function no_gap(l, h, x, y)
+   -- true when the counts k*l..k*h for k = x..y (y and h may be huge) form one range.
+   -- k and k + 1 leave no gap when (k + 1)*l <= k*h + 1, that is l - 1 <= k*(h - l): the
+   -- smallest k, x, is the hardest. With h huge, k = 0 gives only 0, and k >= 1 gives k*l
+   -- and up. (a{1,2}){1,300} is a{1,600}; (a{3}){1,2} is a{3} or a{6}: not a range
+   -- (P2-14)
+   if x == y then
+      return true
+   elseif h == huge then
+      return x >= 1 or l <= 1
+   end
+
+   return l - 1 <= x * (h - l)
+end
+
+local power
+
+local function factor(self, node)
+   -- a seq whose items have different units, read as chunks of one unit U that is itself
+   -- a seq of q >= 2 items: an item whose unit is U adds its range, an empty item adds
+   -- nothing, and q items in a row with the keys of U's items add one match of U.
+   -- ab(ab)* is (ab) 1 + (ab) 0..huge = (ab) 1..huge. Each such U among the items' units
+   -- is tried; nil when none fits
+   local items, tried = node.items, {}
+
+   for i = 1, #items do
+      local p = power(self, items[i])
+      local unit = p.unit
+
+      local k = unit and unit.type == "seq" and #unit.items >= 2 and key(self, unit)
+
+      if k and not tried[k] then
+         tried[k] = true
+
+         local parts, q = unit.items, #unit.items
+         local lo, hi, j = 0, 0, 1
+
+         while j <= #items do
+            local r = power(self, items[j])
+
+            if r.unit == nil then
+               j = j + 1
+            elseif key(self, r.unit) == k then
+               lo, hi, j = lo + r.lo, hi + r.hi, j + 1
+            else
+               local same = j + q - 1 <= #items
+
+               for s = 1, q do
+                  if not same then
+                     break
+                  end
+
+                  same = key(self, items[j + s - 1]) == key(self, parts[s])
+               end
+
+               if not same then
+                  break
+               end
+
+               lo, hi, j = lo + 1, hi + 1, j + q
+            end
+         end
+
+         if j > #items then
+            return { unit = unit, lo = lo, hi = hi }
+         end
+      end
+   end
+
+   return nil
+end
+
+local function power_of(self, node)
+   local t = node.type
+
+   if t == "group" then
+      return power(self, node.body)
+
+   elseif t == "repeat" then
+      local p = power(self, node.node)
+
+      if p.unit == nil then
+         return EMPTY  -- ()*, (|){2,3}: still only ""
+      end
+
+      local x, y = node.min, node.max or huge
+
+      if not no_gap(p.lo, p.hi, x, y) then
+         return opaque(self, node)
+      end
+
+      local hi = (y == huge or p.hi == huge) and huge or y * p.hi
+      return { unit = p.unit, lo = x * p.lo, hi = hi }
+
+   elseif t ~= "seq" and t ~= "alt" then
+      return opaque(self, node)  -- char, set, backref
+   end
+
+   local items = node.items
+
+   if #items == 0 then
+      return EMPTY
+   elseif #items == 1 then
+      return power(self, items[1])
+   end
+
+   if t == "alt" then
+      local unit, k, ranges = nil, nil, {}
+
+      for i = 1, #items do
+         local p = power(self, items[i])
+
+         if p.unit then
+            if k == nil then
+               unit, k = p.unit, key(self, p.unit)
+            elseif key(self, p.unit) ~= k then
+               return opaque(self, node)
+            end
+         end
+
+         ranges[i] = p
+      end
+
+      if unit == nil then
+         return EMPTY
+      end
+
+      sort(ranges, function(r, s) return r.lo < s.lo end)
+      local lo, hi = ranges[1].lo, ranges[1].hi
+
+      for i = 2, #ranges do
+         if ranges[i].lo > hi + 1 then
+            return opaque(self, node)  -- a count is left out: a|aaa
+         elseif ranges[i].hi > hi then
+            hi = ranges[i].hi
+         end
+      end
+
+      return { unit = unit, lo = lo, hi = hi }
+   end
+
+   -- seq: items with one unit add their ranges
+   local unit, k, lo, hi = nil, nil, 0, 0
+
+   for i = 1, #items do
+      local p = power(self, items[i])
+
+      if p.unit then
+         if k ~= nil and key(self, p.unit) ~= k then
+            local f = factor(self, node)
+
+            if f then
+               return f
+            end
+
+            -- the smallest period of the items' keys: abab is (ab) 2..2
+            local m, keys = #items, {}
+
+            for j = 1, m do
+               keys[j] = key(self, items[j])
+            end
+
+            for n = 1, floor(m / 2) do
+               -- the last item first: a different tail ((aaa…ab)) rules a period out at once
+               if m % n == 0 and keys[m] == keys[m - n] then
+                  local periodic = true
+
+                  for j = n + 1, m do
+                     if keys[j] ~= keys[j - n] then
+                        periodic = false
+                        break
+                     end
+                  end
+
+                  if periodic then
+                     local first = {}
+
+                     for j = 1, n do
+                        first[j] = items[j]
+                     end
+
+                     local u = { type = "seq", items = first }
+                     local count = floor(m / n)  -- an integer, also on Lua 5.3+
+                     return { unit = u, lo = count, hi = count }
+                  end
+               end
+            end
+
+            return opaque(self, node)
+         end
+
+         unit, k, lo, hi = p.unit, k or key(self, p.unit), lo + p.lo, hi + p.hi
+      end
+   end
+
+   if unit == nil then
+      return EMPTY
+   end
+
+   return { unit = unit, lo = lo, hi = hi }
+end
+
+function power(self, node)
+   -- memoized: each node is analysed once per compile (nested repeats would otherwise
+   -- analyse their insides again at every level)
+   local p = self.powers[node]
+
+   if p == nil then
+      p = power_of(self, node)
+      self.powers[node] = p
+   end
+
+   return p
+end
 -------------------------------------------------------------------------------
 -- Parser
 -------------------------------------------------------------------------------
@@ -436,8 +751,27 @@ local function compile(self, node)
       return Nfa.unionAll(list)
 
    elseif t == "repeat" then
-      local m = compile(self, node.node)
+      -- count a repeated unit (P2-14): when the body matches what U^l..U^h match, the
+      -- repeat {x,y} matches what U^(x*l)..U^(y*h) match, if no count is left out. So
+      -- (a|aa){1,300} is a{1,600}, (aa*){1,300} is a+, (a*){0,300} is a*, ((ab)|abab){2,3}
+      -- is (ab){2,6}: a few states active while matching instead of one copy per count.
+      -- Also for * + ?. A new node is compiled; the tree isn't changed (backrefs share it)
+      local body = power(self, node.node)
+
+      if body.unit == nil then
+         return Nfa.emptyWord()  -- ()*, (|){2,3}: only ""
+      elseif body.lo ~= 1 or body.hi ~= 1 then
+         local p = power(self, node)
+
+         if p.unit ~= node then
+            -- terminates: the power of a unit is the unit itself, 1..1
+            return compile(self, { type = "repeat", node = p.unit, min = p.lo,
+                                   max = p.hi ~= huge and p.hi or nil })
+         end
+      end
+
       local x, y = node.min, node.max
+      local m = compile(self, node.node)
 
       if x == 0 and y == nil then
          return m:star()
@@ -445,6 +779,17 @@ local function compile(self, node)
          return m:plus()
       elseif x == 0 and y == 1 then
          return m:optional()
+      end
+
+      if (y == nil or y >= 2) and accepts_empty(m) then
+         -- a pattern that accepts "" would keep all its copies linked through epsilons, so
+         -- every copy stays active while matching (P2-14). Since "" is in L, L^k is inside
+         -- L^(k+1): L{x,} = L* and L{x,y} = L^y = (L - {""}){0,y}
+         if y == nil then
+            return m:star()
+         end
+
+         return m:nonEmpty():times(0, y)
       end
 
       return m:times(x, y)
@@ -477,7 +822,14 @@ end
 function Parser:compile()
 -- build an nfa from the syntax tree
    self.expanding = {}
-   return compile(self, self.tree)
+   self.keys, self.powers = {}, {}  -- memo tables of the repeat analysis (P2-14)
+
+   local m = compile(self, self.tree)
+
+   -- a Reg keeps its parser: don't keep the memo tables with it
+   self.keys, self.powers = nil, nil
+
+   return m
 end
 -------------------------------------------------------------------------------
 return Parser

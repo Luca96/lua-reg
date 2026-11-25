@@ -633,10 +633,72 @@ function Nfa.optional(m)
    return Nfa.emptyWord() + m
 end
 
+function Nfa:nonEmpty()
+-- creates an nfa that recognize L(m) without the empty word: L(m) - {""}.
+-- m is copied after a new start state 1, which isn't accepting and has no epsilon
+-- edge: on each character it moves where the states of m's start closure move (each
+-- by its edge for that character, or else by its default edge), so a run reads a
+-- character before it can accept. m's own states stay as they are, loops back into
+-- its start state included. For an empty nfa (Nfa.new()) the result accepts nothing.
+   local edges = table()
+   local accepting = table()
+
+   copy_states(edges, self, 1)
+   copy_accepting(accepting, self, 1)
+
+   local m_edges = self.edges
+   local closure = epsilon_closure(self, { self.current })
+
+   local function moves(char)
+      -- where the closure goes on char (on the default edge when char is nil), shifted
+      local list, seen = table(), {}
+
+      for i = 1, #closure do
+         local edge = m_edges[closure[i]]
+         local targets = edge and ((char and edge[char]) or edge[d])
+
+         if targets then
+            for j = 1, #targets do
+               local state = targets[j] + 1
+
+               if not seen[state] then
+                  seen[state] = true
+                  list[#list + 1] = state
+               end
+            end
+         end
+      end
+
+      return list
+   end
+
+   local first = {}
+
+   for i = 1, #closure do
+      for char in pairs(m_edges[closure[i]] or {}) do
+         if char ~= e and char ~= d and first[char] == nil then
+            first[char] = moves(char)
+         end
+      end
+   end
+
+   local default = moves(nil)
+
+   if #default > 0 then
+      first[d] = default
+   end
+
+   edges[1] = first
+
+   return make(edges, accepting, self.numStates + 1)
+end
+
 function Nfa:times(x, y)
 -- returns a new nfa that recognize L(m){x, y}. x defaults to 0, and y == nil means
 -- no upper bound. Without bounds, or when the result is a single copy, the current
 -- nfa itself is returned. Built in time linear in the number of copies.
+-- When m accepts "", its copies stay linked through epsilons and matching slows down
+-- with y (P2-14): m:nonEmpty():times(0, y) and m:star() (for {x,}) accept the same.
    if x == nil and y == nil then
       return self
    end

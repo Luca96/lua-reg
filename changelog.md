@@ -1,5 +1,52 @@
 # Lua-Reg Changelog
 
+## Unreleased
+
+### New
+- **`Nfa:nonEmpty()`** builds an nfa for L(m) without the empty word. A new start state takes,
+  on each character, the moves of m's start closure, so every run reads a character before it
+  can accept.
+
+### Fixed
+- **P2-14: a wide `{n,m}` range no longer keeps a copy active per repetition when the repeated
+  pattern can match `""` or is one unit repeated a range of times.** `(a*){0,300}` on 300 a's
+  takes ~2 ms instead of ~130 ms, `(a|b*){150,300}` ~1 ms instead of ~90 ms, and `(a|aa){1,300}`
+  ~2 ms instead of ~90 ms (2 states active instead of 1,050). A short or failing subject is cheap
+  again: `(a|b*){1,300}` used to have 1,200 states active before reading anything. The parser now
+  rewrites these repeats into equivalent ones, with the same `matches`, `find`, `findall` and
+  `split` results:
+  - one unit repeated a range of times is counted. The parser works out what a pattern
+    repeats: `(a|aa)` is `a` 1 to 2 times, `aa*` is `a` once or more, `ab|abab` is `(ab)` 1 to
+    2 times, `ab(ab)*` is `(ab)` once or more. When no count is left out, `{n,m}` of it becomes
+    one count of the unit: `(a|aa){1,300}` is `a{1,600}`, `(aa*){1,300}` is `a+`. This covers a
+    quantifier over a quantifier (`(X*){n,m}` is `X*`, `(X+){n,m}` is `X{n,}`, `(X?){n,m}` is
+    `X{0,m}`, `(a{1,2}){1,300}` is `a{1,600}`) and `*`, `+`, `?` too (`((a|aa){1,300})*` is
+    `a*`). Units are compared up to groups, the order of alternatives and the order of a set's
+    characters. Counts with a gap are left as they are: in `(a|aaa){1,300}` a repetition is one
+    or three a's, never two;
+  - any other pattern L that accepts `""` is repeated without its empty match: `L{n,}` is `L*`
+    and `L{n,m}` is `(L - {""}){0,m}`, built with `Nfa:nonEmpty()`.
+
+  Matching no longer slows down with the range. The analysis runs once per pattern element when
+  compiling (about 1–4% of the build time of big patterns) and keeps nothing afterwards; a
+  counted repeat builds a smaller nfa (`a{1,600}`: 1,200 states instead of 2,100), and a repeat
+  of a pattern that accepts `""` can take up to about twice as long to build. `Nfa:times` itself
+  is unchanged.
+
+### Tests and docs
+- **Known issue P2-15** (README *Known issues*, a `#knownbug` test, first item of the Roadmap):
+  a wide `{n,m}` range over a pattern that isn't one unit repeated a range of times is slow:
+  different units (`(a|b*){1,300}` on a long run of b's), counts with a gap (`(a|aaa){1,300}`),
+  or a unit written rotated (`(a(ba)*b){1,300}`, which is `(ab)+`).
+- New tests check that the rewritten repeats keep their language (against the unchanged
+  `Nfa:times`, with bodies whose counts have a gap that must not be rewritten), that a counted
+  unit matches in linear time, test `Nfa:nonEmpty`, and check that a backreference inside its own
+  group is still rejected through a rewritten repeat.
+- **Performance tests** (`spec/perf_spec.lua`, tagged `#perf`): speed and memory against a
+  baseline measured in the same run, with helpers `h.per_op`, `h.retained` and `h.allocated` in
+  `spec/helpers.lua`. 153 tests in all (146 without `#perf`).
+- The Roadmap gains "virtual copies": automata whose size doesn't depend on `{n,m}` bounds.
+
 ## (0.5.1) 21/11/2026
 The first release on LuaRocks (`luarocks install lua-reg`). The engine is unchanged since 0.5.0:
 this release adds packaging, CI on more Lua versions and documentation.
